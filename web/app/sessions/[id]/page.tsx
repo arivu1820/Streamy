@@ -6,6 +6,7 @@ import { useRequireAuth } from '../../../lib/auth';
 import { getSocket } from '../../../lib/socket';
 import { Avatar, Spinner, fmtTime } from '../../../components/ui';
 import { ChatPanel } from '../../../components/ChatPanel';
+import { VoiceBar } from '../../../components/VoiceBar';
 
 export default function TheaterPage() {
   const user = useRequireAuth();
@@ -291,6 +292,8 @@ export default function TheaterPage() {
             ))}
           </div>
         </div>
+
+        <VoiceBar sessionId={sessionId} selfUsername={user.username} />
       </div>
 
       <ChatPanel roomId={detail.roomId} compact />

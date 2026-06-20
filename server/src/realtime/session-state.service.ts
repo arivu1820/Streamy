@@ -29,6 +29,7 @@ interface LiveSession {
   participants: Map<string, { username: string; sockets: Set<string> }>;
   requests: Map<string, PlaybackRequest>;
   changeVote?: ChangeVote;
+  voice: Map<string, { username: string; muted: boolean }>; // userIds currently in voice
 }
 
 @Injectable()
@@ -45,6 +46,7 @@ export class SessionStateService {
       serverTs: Date.now(),
       participants: new Map(),
       requests: new Map(),
+      voice: new Map(),
     };
     this.sessions.set(sessionId, live);
     return live;
@@ -52,6 +54,16 @@ export class SessionStateService {
 
   get(sessionId: string) {
     return this.sessions.get(sessionId);
+  }
+
+  /** Socket ids belonging to a user within a session (for targeted relays). */
+  userSockets(live: LiveSession, userId: string): string[] {
+    const p = live.participants.get(userId);
+    return p ? [...p.sockets] : [];
+  }
+
+  voiceRoster(live: LiveSession): { userId: string; username: string; muted: boolean }[] {
+    return [...live.voice.entries()].map(([userId, v]) => ({ userId, username: v.username, muted: v.muted }));
   }
 
   /** Current playback position accounting for elapsed time while playing. */

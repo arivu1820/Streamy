@@ -246,6 +246,11 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       p.sockets.delete(socket.id);
       if (p.sockets.size === 0) {
         live.participants.delete(user.id);
+        // If they were in voice, tear that down too.
+        if (live.voice.has(user.id)) {
+          live.voice.delete(user.id);
+          this.realtime.toSession(sessionId, 'voice.peer.left', { userId: user.id });
+        }
         await this.prisma.sessionParticipant.updateMany({
           where: { sessionId, userId: user.id, leftAt: null },
           data: { leftAt: new Date() },
@@ -527,5 +532,65 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       newHostUserId: socket.data.user.id,
       reason: 'transfer',
     });
+  }
+
+  // ---------- voice chat (mesh WebRTC signaling, streamy.md Section 46) ----------
+  // The gateway is ONLY a signaling relay; audio flows peer-to-peer. Voice state
+  // is ephemeral (no DB). A newcomer initiates offers to everyone already in voice.
+  @SubscribeMessage('voice.join')
+  onVoiceJoin(@ConnectedSocket() socket: Socket, @MessageBody() body: { sessionId: string }) {
+    const live = this.requireSession(socket, body.sessionId);
+    if (!live) return;
+    const user = socket.data.user;
+    if (!live.participants.has(user.id)) {
+      socket.emit('error', { code: 'NOT_IN_SESSION' });
+      return;
+    }
+    // Existing voice peers (excluding self) — the joiner will call each of them.
+    const peers = this.state.voiceRoster(live).filter((p) => p.userId !== user.id);
+    live.voice.set(user.id, { username: user.username, muted: false });
+    socket.emit('voice.roster', { peers });
+    socket.to(`session:${body.sessionId}`).emit('voice.peer.joined', {
+      userId: user.id,
+      username: user.username,
+    });
+  }
+
+  @SubscribeMessage('voice.leave')
+  onVoiceLeave(@ConnectedSocket() socket: Socket, @MessageBody() body: { sessionId: string }) {
+    const live = this.state.get(body.sessionId);
+    if (!live) return;
+    const user = socket.data.user;
+    if (live.voice.delete(user.id)) {
+      this.realtime.toSession(body.sessionId, 'voice.peer.left', { userId: user.id });
+    }
+  }
+
+  // Relay an SDP offer/answer or ICE candidate to one specific peer's socket(s).
+  @SubscribeMessage('voice.signal')
+  onVoiceSignal(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() body: { sessionId: string; targetUserId: string; data: any },
+  ) {
+    const live = this.state.get(body.sessionId);
+    if (!live) return;
+    const from = socket.data.user;
+    for (const sid of this.state.userSockets(live, body.targetUserId)) {
+      this.server.to(sid).emit('voice.signal', {
+        fromUserId: from.id,
+        fromUsername: from.username,
+        data: body.data,
+      });
+    }
+  }
+
+  @SubscribeMessage('voice.mute')
+  onVoiceMute(@ConnectedSocket() socket: Socket, @MessageBody() body: { sessionId: string; muted: boolean }) {
+    const live = this.state.get(body.sessionId);
+    if (!live) return;
+    const user = socket.data.user;
+    const v = live.voice.get(user.id);
+    if (v) v.muted = !!body.muted;
+    this.realtime.toSession(body.sessionId, 'voice.peer.muted', { userId: user.id, muted: !!body.muted });
   }
 }

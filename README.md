@@ -95,6 +95,13 @@ GOOGLE_CLIENT_ID=""                   # optional: set to enable real Google Sign
 
 ```bash
 NEXT_PUBLIC_API_BASE=http://localhost:4000   # base URL the browser uses to reach the API
+
+# Optional: a TURN relay for voice chat on hard NATs/firewalls. Free for the common
+# case without it (mesh P2P + Google STUN). Add a free TURN (e.g. Open Relay) to improve
+# connectivity. Leave blank to use STUN-only.
+# NEXT_PUBLIC_TURN_URL=turn:your-turn-host:3478
+# NEXT_PUBLIC_TURN_USERNAME=...
+# NEXT_PUBLIC_TURN_CREDENTIAL=...
 ```
 
 If you change the API port, update both `server/.env` `PORT` and `web/.env.local`.
@@ -155,6 +162,7 @@ streamy-app/
 | Playback governance (pause/host/seek/change-vote/transfer) | `realtime/realtime.gateway.ts` | Theater controls |
 | Permanent chat (send/edit/delete) | `realtime/realtime.gateway.ts` | `components/ChatPanel.tsx` |
 | Online presence | `realtime/presence.service.ts` | Members tab + Theater |
+| **Voice chat (mesh WebRTC)** | `realtime/realtime.gateway.ts` (`voice.*` signaling relay) | `lib/useVoice.ts`, `components/VoiceBar.tsx` |
 
 ---
 
@@ -174,6 +182,9 @@ streamy-app/
 7. **Invite:** Members → invite an email. The accept-link appears in-app and in the API
    console. Open it to join.
 8. **Chat** is permanent and shared between the room and the theater.
+9. **Voice:** in the theater, click **Join voice** (allow the mic prompt). Do the same
+   in the other browser — you'll hear each other. Audio is peer-to-peer; use **Mute**
+   to toggle your mic. Voice works on `localhost`; in production it requires **HTTPS**.
 
 ---
 

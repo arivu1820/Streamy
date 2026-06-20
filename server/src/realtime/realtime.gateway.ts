@@ -1,0 +1,531 @@
+import {
+  OnGatewayConnection,
+  OnGatewayDisconnect,
+  OnGatewayInit,
+  SubscribeMessage,
+  WebSocketGateway,
+  WebSocketServer,
+  ConnectedSocket,
+  MessageBody,
+} from '@nestjs/websockets';
+import { JwtService } from '@nestjs/jwt';
+import type { Server, Socket } from 'socket.io';
+import { randomUUID } from 'crypto';
+import { PrismaService } from '../prisma.service';
+import { SessionStateService } from './session-state.service';
+import { PresenceService } from './presence.service';
+import { RealtimeService } from './realtime.service';
+import { verifySocketToken } from '../common/auth.guard';
+import { shouldChangeVideo, majorityThreshold } from '../common/governance';
+
+const CHANGE_VOTE_MS = 30_000;
+
+@WebSocketGateway({
+  namespace: '/rt',
+  cors: { origin: (process.env.WEB_ORIGIN || 'http://localhost:3000').split(','), credentials: true },
+})
+export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
+  @WebSocketServer() server!: Server;
+
+  constructor(
+    private jwt: JwtService,
+    private prisma: PrismaService,
+    private state: SessionStateService,
+    private presence: PresenceService,
+    private realtime: RealtimeService,
+  ) {}
+
+  afterInit(server: Server) {
+    this.realtime.setServer(server);
+  }
+
+  handleConnection(socket: Socket) {
+    const token = (socket.handshake.auth?.token as string) || (socket.handshake.query?.token as string);
+    const user = verifySocketToken(this.jwt, token);
+    if (!user) {
+      socket.emit('error', { code: 'UNAUTHENTICATED' });
+      socket.disconnect(true);
+      return;
+    }
+    socket.data.user = user;
+    socket.data.sessionIds = new Set<string>();
+    this.presence.connect(user.id, user.username);
+  }
+
+  async handleDisconnect(socket: Socket) {
+    const user = socket.data.user;
+    if (!user) return;
+    // Leave any sessions this socket was in.
+    for (const sessionId of socket.data.sessionIds as Set<string>) {
+      await this.leaveSession(socket, sessionId);
+    }
+    this.presence.disconnect(user.id);
+    this.broadcastPresence(user.id);
+  }
+
+  // ---------- presence + rooms ----------
+  @SubscribeMessage('room.subscribe')
+  onRoomSubscribe(@ConnectedSocket() socket: Socket, @MessageBody() body: { roomId: string }) {
+    socket.join(`room:${body.roomId}`);
+    this.presence.trackRoom(socket.data.user.id, body.roomId);
+    this.broadcastPresence(socket.data.user.id);
+  }
+
+  @SubscribeMessage('presence.heartbeat')
+  onHeartbeat(@ConnectedSocket() socket: Socket) {
+    this.presence.touch(socket.data.user.id);
+  }
+
+  private broadcastPresence(userId: string) {
+    const p = this.presence.get(userId);
+    this.server.emit('presence.updated', { userId, ...p });
+  }
+
+  // ---------- chat ----------
+  @SubscribeMessage('chat.message.send')
+  async onChatSend(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() body: { roomId: string; body: string; clientNonce?: string },
+  ) {
+    const user = socket.data.user;
+    const text = (body.body || '').trim();
+    if (!text || text.length > 4000) {
+      socket.emit('error', { code: 'VALIDATION_FAILED' });
+      return;
+    }
+    const member = await this.prisma.roomMember.findUnique({
+      where: { roomId_userId: { roomId: body.roomId, userId: user.id } },
+    });
+    if (!member || member.leftAt) {
+      socket.emit('error', { code: 'NOT_MEMBER' });
+      return;
+    }
+    const channel = await this.prisma.chatChannel.findUnique({ where: { roomId: body.roomId } });
+    if (!channel) return;
+    const msg = await this.prisma.chatMessage.create({
+      data: {
+        channelId: channel.id,
+        authorUserId: user.id,
+        body: text,
+        clientNonce: body.clientNonce ?? null,
+      },
+    });
+    this.realtime.toRoom(body.roomId, 'chat.message.created', {
+      id: msg.id,
+      roomId: body.roomId,
+      authorUserId: user.id,
+      authorUsername: user.username,
+      body: msg.body,
+      createdAt: msg.createdAt,
+      clientNonce: body.clientNonce ?? null,
+    });
+  }
+
+  @SubscribeMessage('chat.message.edit')
+  async onChatEdit(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() body: { roomId: string; messageId: string; body: string },
+  ) {
+    const user = socket.data.user;
+    const msg = await this.prisma.chatMessage.findUnique({ where: { id: body.messageId } });
+    if (!msg || msg.authorUserId !== user.id) {
+      socket.emit('error', { code: 'FORBIDDEN' });
+      return;
+    }
+    const updated = await this.prisma.chatMessage.update({
+      where: { id: body.messageId },
+      data: { body: (body.body || '').trim().slice(0, 4000), editedAt: new Date() },
+    });
+    this.realtime.toRoom(body.roomId, 'chat.message.updated', {
+      id: updated.id,
+      body: updated.body,
+      editedAt: updated.editedAt,
+    });
+  }
+
+  @SubscribeMessage('chat.message.delete')
+  async onChatDelete(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() body: { roomId: string; messageId: string },
+  ) {
+    const user = socket.data.user;
+    const msg = await this.prisma.chatMessage.findUnique({ where: { id: body.messageId } });
+    if (!msg || msg.authorUserId !== user.id) {
+      socket.emit('error', { code: 'FORBIDDEN' });
+      return;
+    }
+    await this.prisma.chatMessage.update({
+      where: { id: body.messageId },
+      data: { deletedAt: new Date(), body: '' },
+    });
+    this.realtime.toRoom(body.roomId, 'chat.message.deleted', { id: body.messageId });
+  }
+
+  @SubscribeMessage('chat.typing')
+  onTyping(@ConnectedSocket() socket: Socket, @MessageBody() body: { roomId: string; isTyping: boolean }) {
+    socket.to(`room:${body.roomId}`).emit('chat.typing', {
+      userId: socket.data.user.id,
+      username: socket.data.user.username,
+      isTyping: body.isTyping,
+    });
+  }
+
+  // ---------- session join / leave ----------
+  @SubscribeMessage('session.join')
+  async onSessionJoin(@ConnectedSocket() socket: Socket, @MessageBody() body: { sessionId: string }) {
+    const user = socket.data.user;
+    const session = await this.prisma.watchSession.findUnique({ where: { id: body.sessionId } });
+    if (!session || session.status !== 'active') {
+      socket.emit('error', { code: 'SESSION_ENDED' });
+      return;
+    }
+    const member = await this.prisma.roomMember.findUnique({
+      where: { roomId_userId: { roomId: session.roomId, userId: user.id } },
+    });
+    if (!member || member.leftAt) {
+      socket.emit('error', { code: 'NOT_MEMBER' });
+      return;
+    }
+    let live = this.state.get(body.sessionId);
+    if (!live) {
+      live = this.state.init(body.sessionId, {
+        hostUserId: session.hostUserId,
+        nowPlayingVideoId: session.nowPlayingVideoId,
+        positionMs: session.lastPositionMs,
+        isPlaying: session.isPlaying,
+      });
+    }
+    socket.join(`session:${body.sessionId}`);
+    (socket.data.sessionIds as Set<string>).add(body.sessionId);
+
+    let p = live.participants.get(user.id);
+    if (!p) {
+      p = { username: user.username, sockets: new Set() };
+      live.participants.set(user.id, p);
+      await this.prisma.sessionParticipant.upsert({
+        where: { sessionId_userId: { sessionId: body.sessionId, userId: user.id } },
+        create: { sessionId: body.sessionId, userId: user.id },
+        update: { leftAt: null },
+      });
+    }
+    p.sockets.add(socket.id);
+
+    this.presence.setActivity(user.id, body.sessionId, 'Watching');
+    this.broadcastPresence(user.id);
+
+    // Send the late-joiner the authoritative snapshot (FR-6.4).
+    socket.emit('session.state', this.state.snapshot(body.sessionId));
+    this.realtime.toSession(body.sessionId, 'participant.joined', {
+      sessionId: body.sessionId,
+      user: { userId: user.id, username: user.username },
+    });
+    // If a change vote is open, let the late joiner see it.
+    if (live.changeVote) {
+      socket.emit('playback.change.opened', {
+        voteId: live.changeVote.voteId,
+        videoId: live.changeVote.videoId,
+        videoTitle: live.changeVote.videoTitle,
+        deadline: live.changeVote.deadline,
+      });
+    }
+  }
+
+  @SubscribeMessage('session.leave')
+  async onSessionLeave(@ConnectedSocket() socket: Socket, @MessageBody() body: { sessionId: string }) {
+    await this.leaveSession(socket, body.sessionId);
+  }
+
+  private async leaveSession(socket: Socket, sessionId: string) {
+    const user = socket.data.user;
+    const live = this.state.get(sessionId);
+    socket.leave(`session:${sessionId}`);
+    (socket.data.sessionIds as Set<string>).delete(sessionId);
+    if (!live) return;
+    const p = live.participants.get(user.id);
+    if (p) {
+      p.sockets.delete(socket.id);
+      if (p.sockets.size === 0) {
+        live.participants.delete(user.id);
+        await this.prisma.sessionParticipant.updateMany({
+          where: { sessionId, userId: user.id, leftAt: null },
+          data: { leftAt: new Date() },
+        });
+        this.presence.setActivity(user.id, null, null);
+        this.broadcastPresence(user.id);
+        this.realtime.toSession(sessionId, 'participant.left', { sessionId, userId: user.id });
+
+        // Host succession (edge case 14a).
+        if (live.hostUserId === user.id && live.participants.size > 0) {
+          const newHost = [...live.participants.keys()][0];
+          live.hostUserId = newHost;
+          await this.prisma.watchSession.update({
+            where: { id: sessionId },
+            data: { hostUserId: newHost },
+          });
+          this.realtime.toSession(sessionId, 'host.changed', {
+            newHostUserId: newHost,
+            reason: 'host_left',
+          });
+        }
+      }
+    }
+    // Empty session => end it.
+    if (live.participants.size === 0) {
+      await this.endSession(sessionId, live);
+    }
+  }
+
+  private async endSession(sessionId: string, live: any) {
+    await this.prisma.watchSession.update({
+      where: { id: sessionId },
+      data: {
+        status: 'ended',
+        endedAt: new Date(),
+        isPlaying: false,
+        lastPositionMs: this.state.currentPositionMs(live),
+      },
+    });
+    this.realtime.toSession(sessionId, 'session.ended', { sessionId });
+    this.state.remove(sessionId);
+  }
+
+  // ---------- playback governance (streamy.md Section 14) ----------
+  private requireSession(socket: Socket, sessionId: string) {
+    const live = this.state.get(sessionId);
+    if (!live) {
+      socket.emit('error', { code: 'SESSION_ENDED' });
+      return null;
+    }
+    return live;
+  }
+
+  // Tier 1: anyone can pause, instantly, no vote.
+  @SubscribeMessage('playback.pause')
+  onPause(@ConnectedSocket() socket: Socket, @MessageBody() body: { sessionId: string }) {
+    const live = this.requireSession(socket, body.sessionId);
+    if (!live) return;
+    this.state.setPlaying(live, false);
+    this.realtime.toSession(body.sessionId, 'playback.paused', {
+      by: socket.data.user.username,
+      positionMs: live.positionMs,
+      serverTs: live.serverTs,
+    });
+  }
+
+  // Tier 2: only host can resume/play.
+  @SubscribeMessage('playback.play')
+  onPlay(@ConnectedSocket() socket: Socket, @MessageBody() body: { sessionId: string }) {
+    const live = this.requireSession(socket, body.sessionId);
+    if (!live) return;
+    if (live.hostUserId !== socket.data.user.id) {
+      socket.emit('error', { code: 'NOT_HOST' });
+      return;
+    }
+    this.state.setPlaying(live, true);
+    this.realtime.toSession(body.sessionId, 'playback.played', {
+      positionMs: live.positionMs,
+      serverTs: live.serverTs,
+    });
+  }
+
+  // Tier 3: only host can seek.
+  @SubscribeMessage('playback.seek')
+  onSeek(@ConnectedSocket() socket: Socket, @MessageBody() body: { sessionId: string; positionMs: number }) {
+    const live = this.requireSession(socket, body.sessionId);
+    if (!live) return;
+    if (live.hostUserId !== socket.data.user.id) {
+      socket.emit('error', { code: 'NOT_HOST' });
+      return;
+    }
+    this.state.seek(live, body.positionMs);
+    this.realtime.toSession(body.sessionId, 'playback.seeked', {
+      positionMs: live.positionMs,
+      serverTs: live.serverTs,
+      by: socket.data.user.username,
+    });
+  }
+
+  // Tier 3: participants request seek; host approves/rejects.
+  @SubscribeMessage('playback.request')
+  onRequest(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() body: { sessionId: string; type: 'seek' | 'forward' | 'rewind'; positionMs: number },
+  ) {
+    const live = this.requireSession(socket, body.sessionId);
+    if (!live) return;
+    const req = {
+      id: randomUUID(),
+      type: body.type,
+      byUserId: socket.data.user.id,
+      byUsername: socket.data.user.username,
+      positionMs: Math.max(0, body.positionMs || 0),
+      createdAt: Date.now(),
+    };
+    live.requests.set(req.id, req);
+    this.realtime.toSession(body.sessionId, 'playback.request.created', { request: req });
+  }
+
+  @SubscribeMessage('playback.request.approve')
+  onApprove(@ConnectedSocket() socket: Socket, @MessageBody() body: { sessionId: string; requestId: string }) {
+    const live = this.requireSession(socket, body.sessionId);
+    if (!live) return;
+    if (live.hostUserId !== socket.data.user.id) {
+      socket.emit('error', { code: 'NOT_HOST' });
+      return;
+    }
+    const req = live.requests.get(body.requestId);
+    if (!req) {
+      socket.emit('error', { code: 'STALE_REQUEST' });
+      return;
+    }
+    live.requests.delete(body.requestId);
+    this.state.seek(live, req.positionMs);
+    this.realtime.toSession(body.sessionId, 'playback.request.resolved', {
+      requestId: body.requestId,
+      outcome: 'approved',
+    });
+    this.realtime.toSession(body.sessionId, 'playback.seeked', {
+      positionMs: live.positionMs,
+      serverTs: live.serverTs,
+      by: req.byUsername + ' (approved)',
+    });
+  }
+
+  @SubscribeMessage('playback.request.reject')
+  onReject(@ConnectedSocket() socket: Socket, @MessageBody() body: { sessionId: string; requestId: string }) {
+    const live = this.requireSession(socket, body.sessionId);
+    if (!live) return;
+    if (live.hostUserId !== socket.data.user.id) return;
+    live.requests.delete(body.requestId);
+    this.realtime.toSession(body.sessionId, 'playback.request.resolved', {
+      requestId: body.requestId,
+      outcome: 'rejected',
+    });
+  }
+
+  // Tier 4: change video requires a participant-majority vote.
+  @SubscribeMessage('playback.change.request')
+  async onChangeRequest(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() body: { sessionId: string; videoId: string },
+  ) {
+    const live = this.requireSession(socket, body.sessionId);
+    if (!live) return;
+    if (live.changeVote) {
+      socket.emit('error', { code: 'CHANGE_VOTE_IN_PROGRESS' });
+      return;
+    }
+    const session = await this.prisma.watchSession.findUnique({ where: { id: body.sessionId } });
+    const video = await this.prisma.video.findFirst({
+      where: { id: body.videoId, roomId: session?.roomId, deletedAt: null, status: 'ready' },
+    });
+    if (!video) {
+      socket.emit('error', { code: 'VIDEO_NOT_READY' });
+      return;
+    }
+    live.changeVote = {
+      voteId: randomUUID(),
+      videoId: video.id,
+      videoTitle: video.title,
+      deadline: Date.now() + CHANGE_VOTE_MS,
+      votes: new Map([[socket.data.user.id, 'approve']]),
+    };
+    this.realtime.toSession(body.sessionId, 'playback.change.opened', {
+      voteId: live.changeVote.voteId,
+      videoId: video.id,
+      videoTitle: video.title,
+      deadline: live.changeVote.deadline,
+      initiator: socket.data.user.username,
+    });
+    this.emitChangeTally(body.sessionId, live);
+    setTimeout(() => this.finalizeChangeVote(body.sessionId), CHANGE_VOTE_MS + 200);
+  }
+
+  @SubscribeMessage('playback.change.vote')
+  onChangeVote(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() body: { sessionId: string; voteId: string; value: 'approve' | 'reject' },
+  ) {
+    const live = this.requireSession(socket, body.sessionId);
+    if (!live || !live.changeVote || live.changeVote.voteId !== body.voteId) return;
+    live.changeVote.votes.set(socket.data.user.id, body.value);
+    this.emitChangeTally(body.sessionId, live);
+  }
+
+  private emitChangeTally(sessionId: string, live: any) {
+    const cv = live.changeVote;
+    if (!cv) return;
+    const approvals = [...cv.votes.values()].filter((v) => v === 'approve').length;
+    const rejects = [...cv.votes.values()].filter((v) => v === 'reject').length;
+    const participants = live.participants.size;
+    this.realtime.toSession(sessionId, 'playback.change.voted', {
+      voteId: cv.voteId,
+      approvals,
+      rejects,
+      participants,
+      needed: majorityThreshold(participants),
+    });
+  }
+
+  private async finalizeChangeVote(sessionId: string) {
+    const live = this.state.get(sessionId);
+    if (!live || !live.changeVote) return;
+    const cv = live.changeVote;
+    const approvals = [...cv.votes.values()].filter((v) => v === 'approve').length;
+    const participants = live.participants.size;
+    live.changeVote = undefined;
+
+    if (shouldChangeVideo(approvals, participants)) {
+      live.nowPlayingVideoId = cv.videoId;
+      this.state.setPlaying(live, false, 0);
+      await this.prisma.watchSession.update({
+        where: { id: sessionId },
+        data: { nowPlayingVideoId: cv.videoId, isPlaying: false, lastPositionMs: 0 },
+      });
+      this.realtime.toSession(sessionId, 'playback.video.changed', {
+        videoId: cv.videoId,
+        videoTitle: cv.videoTitle,
+        serverTs: Date.now(),
+      });
+    } else {
+      this.realtime.toSession(sessionId, 'playback.change.rejected', {
+        voteId: cv.voteId,
+        approvals,
+        participants,
+      });
+    }
+  }
+
+  // ---------- host transfer ----------
+  @SubscribeMessage('host.transfer.offer')
+  onHostOffer(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() body: { sessionId: string; targetUserId: string },
+  ) {
+    const live = this.requireSession(socket, body.sessionId);
+    if (!live) return;
+    if (live.hostUserId !== socket.data.user.id) {
+      socket.emit('error', { code: 'NOT_HOST' });
+      return;
+    }
+    this.realtime.toSession(body.sessionId, 'host.transfer.offered', {
+      targetUserId: body.targetUserId,
+      from: socket.data.user.username,
+    });
+  }
+
+  @SubscribeMessage('host.transfer.accept')
+  async onHostAccept(@ConnectedSocket() socket: Socket, @MessageBody() body: { sessionId: string }) {
+    const live = this.requireSession(socket, body.sessionId);
+    if (!live) return;
+    live.hostUserId = socket.data.user.id;
+    await this.prisma.watchSession.update({
+      where: { id: body.sessionId },
+      data: { hostUserId: socket.data.user.id },
+    });
+    this.realtime.toSession(body.sessionId, 'host.changed', {
+      newHostUserId: socket.data.user.id,
+      reason: 'transfer',
+    });
+  }
+}

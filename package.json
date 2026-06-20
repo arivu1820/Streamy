@@ -1,0 +1,21 @@
+{
+  "name": "streamy-app",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Streamy — private shared video platform for friend groups (easy-run demo build)",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "setup": "npm run setup -w streamy-server",
+    "dev": "concurrently -n api,web -c blue,green \"npm run dev -w streamy-server\" \"npm run dev -w streamy-web\"",
+    "dev:api": "npm run dev -w streamy-server",
+    "dev:web": "npm run dev -w streamy-web",
+    "test": "npm test -w streamy-server",
+    "build": "npm run build -w streamy-server && npm run build -w streamy-web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

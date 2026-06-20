@@ -1,0 +1,182 @@
+// Streamy data model (easy-run build: SQLite).
+// Faithful to streamy.md Section 19. SQLite has no native enums/citext, so
+// enum-like fields are strings validated in code, and emails/usernames are
+// stored lowercased for case-insensitive uniqueness.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String   @id @default(uuid())
+  googleSub   String?  @unique // null for dev-login users
+  email       String   @unique // stored lowercased
+  username    String   @unique // stored lowercased; format enforced in code
+  displayName String?
+  avatarUrl   String? // null => placeholder avatar generated client-side
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  memberships  RoomMember[]
+  invitesSent  Invitation[]         @relation("InvitedBy")
+  videos       Video[]
+  deleteVotes  VideoDeleteVote[]
+  chatMessages ChatMessage[]
+  sessionsHosted WatchSession[]     @relation("Host")
+  sessionsCreated WatchSession[]    @relation("SessionCreator")
+  participations SessionParticipant[]
+}
+
+// NOTE: deliberately no owner/admin fields. Equality is structural.
+model Room {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  coverUrl    String?
+  status      String   @default("active") // active | archived | purged
+  createdById String
+  createdAt   DateTime @default(now())
+  archivedAt  DateTime?
+  updatedAt   DateTime @updatedAt
+
+  members     RoomMember[]
+  invitations Invitation[]
+  videos      Video[]
+  sessions    WatchSession[]
+  chatChannel ChatChannel?
+}
+
+model RoomMember {
+  id       String    @id @default(uuid())
+  roomId   String
+  userId   String
+  joinedAt DateTime  @default(now())
+  leftAt   DateTime? // null => active member
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([roomId, userId])
+  @@index([roomId])
+}
+
+model Invitation {
+  id           String    @id @default(uuid())
+  roomId       String
+  invitedEmail String // lowercased
+  invitedById  String
+  token        String    @unique // raw token (demo); spec stores a hash
+  status       String    @default("pending") // pending|accepted|declined|expired|revoked
+  expiresAt    DateTime
+  createdAt    DateTime  @default(now())
+  respondedAt  DateTime?
+
+  room      Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  invitedBy User @relation("InvitedBy", fields: [invitedById], references: [id])
+
+  @@index([invitedEmail])
+}
+
+model Video {
+  id               String    @id @default(uuid())
+  roomId           String
+  uploadedById     String
+  title            String
+  originalFilename String
+  sizeBytes        Int
+  container        String
+  durationMs       Int?
+  status           String    @default("uploading") // uploading|processing|ready|failed|deleting|deleted
+  storageKey       String // path on local disk for demo
+  posterUrl        String?
+  failureReason    String?
+  createdAt        DateTime  @default(now())
+  readyAt          DateTime?
+  deletedAt        DateTime?
+
+  room        Room              @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  uploadedBy  User              @relation(fields: [uploadedById], references: [id])
+  deleteVotes VideoDeleteVote[]
+  sessions    WatchSession[]
+
+  @@index([roomId])
+}
+
+model VideoDeleteVote {
+  id        String   @id @default(uuid())
+  videoId   String
+  userId    String
+  value     String // delete | keep
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  video Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id])
+
+  @@unique([videoId, userId])
+  @@index([videoId])
+}
+
+model WatchSession {
+  id                String    @id @default(uuid())
+  roomId            String
+  createdById       String
+  hostUserId        String
+  nowPlayingVideoId String?
+  status            String    @default("active") // active | ended
+  lastPositionMs    Int       @default(0)
+  isPlaying         Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  endedAt           DateTime?
+
+  room         Room                 @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  createdBy    User                 @relation("SessionCreator", fields: [createdById], references: [id])
+  host         User                 @relation("Host", fields: [hostUserId], references: [id])
+  nowPlaying   Video?               @relation(fields: [nowPlayingVideoId], references: [id])
+  participants SessionParticipant[]
+
+  @@index([roomId])
+}
+
+model SessionParticipant {
+  id        String    @id @default(uuid())
+  sessionId String
+  userId    String
+  joinedAt  DateTime  @default(now())
+  leftAt    DateTime?
+
+  session WatchSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user    User         @relation(fields: [userId], references: [id])
+
+  @@unique([sessionId, userId])
+}
+
+model ChatChannel {
+  id        String   @id @default(uuid())
+  roomId    String   @unique
+  createdAt DateTime @default(now())
+
+  room     Room          @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  messages ChatMessage[]
+}
+
+model ChatMessage {
+  id           String    @id @default(uuid())
+  channelId    String
+  authorUserId String
+  body         String
+  clientNonce  String?
+  createdAt    DateTime  @default(now())
+  editedAt     DateTime?
+  deletedAt    DateTime?
+
+  channel ChatChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  author  User        @relation(fields: [authorUserId], references: [id])
+
+  @@index([channelId, createdAt])
+}

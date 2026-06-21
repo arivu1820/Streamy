@@ -113,7 +113,6 @@ export class SessionStateService {
         username: p.username,
       })),
       memberPermissions: this.allPermissions(s),
-      voiceRoster: this.voiceRoster(s),
     };
   }
 
@@ -150,9 +149,4 @@ export class SessionStateService {
     return this.getPermissions(live, userId).voice;
   }
   canPlayback(live: LiveSession, userId: string): boolean {
-    return this.getPermissions(live, userId).playback;
-  }
-  canRequest(live: LiveSession, userId: string): boolean {
-    return this.getPermissions(live, userId).request;
-  }
-}
+    return this.getPermissi

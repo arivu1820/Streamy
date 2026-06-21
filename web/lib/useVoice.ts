@@ -35,17 +35,66 @@ export function useVoice(sessionId: string) {
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
   const [error, setError] = useState<string | null>(null);
 
+  // Always-visible list of everyone currently in voice (including self when joined).
+  // Populated from session.state on load and kept live via voice.peer.* events.
+  const [voicePresence, setVoicePresence] = useState<VoicePeer[]>([]);
+
   const localStream = useRef<MediaStream | null>(null);
   const pcs = useRef<Map<string, RTCPeerConnection>>(new Map());
   const pendingIce = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const handlers = useRef<Record<string, (...a: any[]) => void>>({});
 
+  // ---------- voicePresence helpers ----------
+  const upsertPresence = useCallback((p: VoicePeer) => {
+    setVoicePresence((prev) => {
+      const i = prev.findIndex((x) => x.userId === p.userId);
+      if (i >= 0) {
+        const copy = [...prev];
+        copy[i] = { ...copy[i], muted: p.muted, username: p.username || copy[i].username };
+        return copy;
+      }
+      return [...prev, p];
+    });
+  }, []);
+
+  const removePresence = useCallback((userId: string) => {
+    setVoicePresence((prev) => prev.filter((x) => x.userId !== userId));
+  }, []);
+
+  // Always-on listeners: track who is in voice regardless of whether we joined.
+  useEffect(() => {
+    const s = getSocket();
+
+    const onState = (snap: any) => {
+      if (snap?.voiceRoster) setVoicePresence(snap.voiceRoster);
+    };
+    const onJoined = (p: { userId: string; username: string }) =>
+      upsertPresence({ userId: p.userId, username: p.username, muted: false });
+    const onLeft = (p: { userId: string }) => removePresence(p.userId);
+    const onMuted = (p: { userId: string; muted: boolean }) =>
+      setVoicePresence((prev) =>
+        prev.map((x) => (x.userId === p.userId ? { ...x, muted: p.muted } : x)),
+      );
+
+    s.on('session.state', onState);
+    s.on('voice.peer.joined', onJoined);
+    s.on('voice.peer.left', onLeft);
+    s.on('voice.peer.muted', onMuted);
+
+    return () => {
+      s.off('session.state', onState);
+      s.off('voice.peer.joined', onJoined);
+      s.off('voice.peer.left', onLeft);
+      s.off('voice.peer.muted', onMuted);
+    };
+  }, [upsertPresence, removePresence]);
+
+  // ---------- peers (WebRTC connections) ----------
   const upsertPeer = useCallback((p: VoicePeer) => {
     setPeers((prev) => {
       const i = prev.findIndex((x) => x.userId === p.userId);
       if (i >= 0) {
         const copy = [...prev];
-        // never overwrite a known username with an empty one (mute events carry none)
         copy[i] = { ...copy[i], muted: p.muted, username: p.username || copy[i].username };
         return copy;
       }
@@ -117,86 +166,114 @@ export function useVoice(sessionId: string) {
     }
   }, []);
 
-  const join = useCallback(async () => {
-    if (inVoice) return;
-    setError(null);
-    try {
-      localStream.current = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    } catch {
-      setError('Microphone permission is required to join voice.');
-      return;
-    }
-    const s = getSocket();
+  const join = useCallback(
+    async (selfUserId: string, selfUsername: string) => {
+      if (inVoice) return;
+      setError(null);
+      try {
+        localStream.current = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      } catch {
+        setError('Microphone permission is required to join voice.');
+        return;
+      }
+      const s = getSocket();
 
-    handlers.current.roster = ({ peers }: { peers: VoicePeer[] }) => {
-      peers.forEach((p) => createPeer(p.userId, p.username, true)); // newcomer calls existing peers
-    };
-    handlers.current.joined = (p: { userId: string; username: string }) => {
-      upsertPeer({ userId: p.userId, username: p.username, muted: false }); // they will offer us
-    };
-    handlers.current.left = (p: { userId: string }) => removePeer(p.userId);
-    handlers.current.muted = (p: { userId: string; muted: boolean }) =>
-      upsertPeer({ userId: p.userId, username: '', muted: p.muted } as VoicePeer);
-    handlers.current.signal = async ({ fromUserId, fromUsername, data }: any) => {
-      let pc = pcs.current.get(fromUserId);
-      if (data.type === 'offer') {
-        if (!pc) pc = createPeer(fromUserId, fromUsername, false);
-        await pc.setRemoteDescription(data);
-        await drainIce(fromUserId, pc);
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        getSocket().emit('voice.signal', { sessionId, targetUserId: fromUserId, data: pc.localDescription });
-      } else if (data.type === 'answer') {
-        if (pc) {
+      handlers.current.roster = ({ peers }: { peers: VoicePeer[] }) => {
+        peers.forEach((p) => createPeer(p.userId, p.username, true));
+        // Sync voicePresence with the full current roster + self
+        setVoicePresence((prev) => {
+          const merged = [...prev];
+          peers.forEach((p) => {
+            if (!merged.find((x) => x.userId === p.userId)) merged.push(p);
+          });
+          if (!merged.find((x) => x.userId === selfUserId)) {
+            merged.push({ userId: selfUserId, username: selfUsername, muted: false });
+          }
+          return merged;
+        });
+      };
+      handlers.current.joined = (p: { userId: string; username: string }) => {
+        upsertPeer({ userId: p.userId, username: p.username, muted: false }); // they will offer us
+      };
+      handlers.current.left = (p: { userId: string }) => removePeer(p.userId);
+      handlers.current.muted = (p: { userId: string; muted: boolean }) =>
+        upsertPeer({ userId: p.userId, username: '', muted: p.muted } as VoicePeer);
+      handlers.current.signal = async ({ fromUserId, fromUsername, data }: any) => {
+        let pc = pcs.current.get(fromUserId);
+        if (data.type === 'offer') {
+          if (!pc) pc = createPeer(fromUserId, fromUsername, false);
           await pc.setRemoteDescription(data);
           await drainIce(fromUserId, pc);
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          getSocket().emit('voice.signal', { sessionId, targetUserId: fromUserId, data: pc.localDescription });
+        } else if (data.type === 'answer') {
+          if (pc) {
+            await pc.setRemoteDescription(data);
+            await drainIce(fromUserId, pc);
+          }
+        } else if (data.candidate) {
+          if (pc && pc.remoteDescription) {
+            await pc.addIceCandidate(data.candidate).catch(() => {});
+          } else {
+            const q = pendingIce.current.get(fromUserId) || [];
+            q.push(data.candidate);
+            pendingIce.current.set(fromUserId, q);
+          }
         }
-      } else if (data.candidate) {
-        if (pc && pc.remoteDescription) {
-          await pc.addIceCandidate(data.candidate).catch(() => {});
-        } else {
-          const q = pendingIce.current.get(fromUserId) || [];
-          q.push(data.candidate);
-          pendingIce.current.set(fromUserId, q);
-        }
+      };
+
+      s.on('voice.roster', handlers.current.roster);
+      s.on('voice.peer.joined', handlers.current.joined);
+      s.on('voice.peer.left', handlers.current.left);
+      s.on('voice.peer.muted', handlers.current.muted);
+      s.on('voice.signal', handlers.current.signal);
+
+      s.emit('voice.join', { sessionId });
+      setInVoice(true);
+      setMuted(false);
+      // Add self to voicePresence immediately (roster event fills in peers)
+      upsertPresence({ userId: selfUserId, username: selfUsername, muted: false });
+    },
+    [inVoice, sessionId, createPeer, removePeer, upsertPeer, upsertPresence, drainIce],
+  );
+
+  const leave = useCallback(
+    (selfUserId?: string) => {
+      const s = getSocket();
+      s.emit('voice.leave', { sessionId });
+      s.off('voice.roster', handlers.current.roster);
+      s.off('voice.peer.joined', handlers.current.joined);
+      s.off('voice.peer.left', handlers.current.left);
+      s.off('voice.peer.muted', handlers.current.muted);
+      s.off('voice.signal', handlers.current.signal);
+      pcs.current.forEach((pc) => pc.close());
+      pcs.current.clear();
+      pendingIce.current.clear();
+      localStream.current?.getTracks().forEach((t) => t.stop());
+      localStream.current = null;
+      setRemoteStreams({});
+      setPeers([]);
+      setInVoice(false);
+      if (selfUserId) removePresence(selfUserId);
+    },
+    [sessionId, removePresence],
+  );
+
+  const toggleMute = useCallback(
+    (selfUserId?: string) => {
+      const next = !muted;
+      localStream.current?.getAudioTracks().forEach((t) => (t.enabled = !next));
+      setMuted(next);
+      getSocket().emit('voice.mute', { sessionId, muted: next });
+      if (selfUserId) {
+        setVoicePresence((prev) =>
+          prev.map((x) => (x.userId === selfUserId ? { ...x, muted: next } : x)),
+        );
       }
-    };
-
-    s.on('voice.roster', handlers.current.roster);
-    s.on('voice.peer.joined', handlers.current.joined);
-    s.on('voice.peer.left', handlers.current.left);
-    s.on('voice.peer.muted', handlers.current.muted);
-    s.on('voice.signal', handlers.current.signal);
-
-    s.emit('voice.join', { sessionId });
-    setInVoice(true);
-    setMuted(false);
-  }, [inVoice, sessionId, createPeer, removePeer, upsertPeer, drainIce]);
-
-  const leave = useCallback(() => {
-    const s = getSocket();
-    s.emit('voice.leave', { sessionId });
-    s.off('voice.roster', handlers.current.roster);
-    s.off('voice.peer.joined', handlers.current.joined);
-    s.off('voice.peer.left', handlers.current.left);
-    s.off('voice.peer.muted', handlers.current.muted);
-    s.off('voice.signal', handlers.current.signal);
-    pcs.current.forEach((pc) => pc.close());
-    pcs.current.clear();
-    pendingIce.current.clear();
-    localStream.current?.getTracks().forEach((t) => t.stop());
-    localStream.current = null;
-    setRemoteStreams({});
-    setPeers([]);
-    setInVoice(false);
-  }, [sessionId]);
-
-  const toggleMute = useCallback(() => {
-    const next = !muted;
-    localStream.current?.getAudioTracks().forEach((t) => (t.enabled = !next));
-    setMuted(next);
-    getSocket().emit('voice.mute', { sessionId, muted: next });
-  }, [muted, sessionId]);
+    },
+    [muted, sessionId],
+  );
 
   // Tear down on unmount.
   useEffect(() => {
@@ -206,5 +283,5 @@ export function useVoice(sessionId: string) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inVoice]);
 
-  return { inVoice, muted, peers, remoteStreams, error, join, leave, toggleMute };
+  return { inVoice, muted, peers, remoteStreams, error, voicePresence, join, leave, toggleMute };
 }

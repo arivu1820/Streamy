@@ -274,7 +274,7 @@ export default function TheaterPage() {
           </div>
         </div>
 
-        <VoiceBar sessionId={sessionId} selfUsername={user.username} voiceEnabled={isHost || myPermissions.voice} />
+        <VoiceBar sessionId={sessionId} selfUserId={user.id} selfUsername={user.username} voiceEnabled={isHost || myPermissions.voice} />
       </div>
 
       {/* RIGHT COLUMN */}

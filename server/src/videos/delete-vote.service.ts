@@ -1,13 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
+import { StorageService } from '../storage/storage.service';
 import { buildDeleteTally, shouldDeleteVideo } from '../common/governance';
-import { promises as fs } from 'fs';
-import * as path from 'path';
 
 @Injectable()
 export class DeleteVoteService {
-  constructor(private prisma: PrismaService, private realtime: RealtimeService) {}
+  constructor(
+    private prisma: PrismaService,
+    private realtime: RealtimeService,
+    private storage: StorageService,
+  ) {}
 
   /** Tally restricted to votes from CURRENT active members (denominator is live). */
   async tally(videoId: string, roomId: string) {
@@ -56,14 +59,8 @@ export class DeleteVoteService {
           where: { id: videoId },
           data: { status: 'deleted', deletedAt: new Date() },
         });
-        // Purge media from local storage (R2 prefix delete in prod).
-        try {
-          await fs.rm(path.resolve(process.env.UPLOAD_DIR || './storage', video.storageKey), {
-            force: true,
-          });
-        } catch {
-          /* best-effort */
-        }
+        // Purge media from whichever backend stores it (local disk or R2).
+        await this.storage.remove(video.storageKey);
         this.realtime.toRoom(roomId, 'video.deleted', { videoId });
       }
     }

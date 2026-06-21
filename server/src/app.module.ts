@@ -10,11 +10,13 @@ import { InvitationsModule } from './invitations/invitations.module';
 import { VideosModule } from './videos/videos.module';
 import { SessionsModule } from './sessions/sessions.module';
 import { RealtimeModule } from './realtime/realtime.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     SharedModule,
+    HealthModule,
     AuthModule,
     UsersModule,
     RoomsModule,

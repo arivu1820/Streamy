@@ -1,7 +1,33 @@
+# Dependencies & build output
 node_modules/
 .next/
 dist/
+*.tsbuildinfo
+
+# Logs
 *.log
+npm-debug.log*
+
+# Environment & secrets — NEVER commit these. Keep *.example files tracked.
+.env
+.env.*
+!.env.example
+!.env.*.example
+# (covers web/.env.local, server/.env, root .env, etc.)
+
+# Local databases / Prisma dev artifacts (SQLite is retired)
+*.db
+*.sqlite
+*.sqlite3
 server/streamy.db
+
+# Uploaded media — never commit large/binary uploads
 server/storage/
+
+# Editor / OS noise
 .DS_Store
+.vscode/
+.idea/
+
+# Stray backup files
+*.bak

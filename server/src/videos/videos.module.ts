@@ -27,7 +27,11 @@ import { AuthUser, CurrentUser, Public, verifySocketToken } from '../common/auth
 import { MembershipService } from '../common/membership.service';
 import { DeleteVoteService } from './delete-vote.service';
 import { RealtimeService } from '../realtime/realtime.service';
+import { StorageService } from '../storage/storage.service';
 
+// UPLOAD_DIR doubles as the local staging dir. With the local driver the file
+// stays here and is streamed from disk. With the r2 driver the file is written
+// here transiently, uploaded to R2, then deleted (see StorageService).
 const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || './storage');
 const MAX_BYTES = 10 * 1024 * 1024 * 1024; // 10 GB
 const ALLOWED = ['mp4', 'mkv', 'avi', 'mov', 'webm', 'm4v', 'ogv'];
@@ -53,6 +57,7 @@ export class VideosController {
     private votes: DeleteVoteService,
     private realtime: RealtimeService,
     private jwt: JwtService,
+    private storage: StorageService,
   ) {}
 
   @Post('rooms/:roomId/videos')
@@ -87,6 +92,12 @@ export class VideosController {
       await fs.rm(file.path, { force: true });
       throw new BadRequestException({ code: 'FILE_TOO_LARGE' });
     }
+
+    // Move the staged file into permanent storage (disk move, or R2 upload).
+    const key = path.basename(file.path);
+    const contentType = MIME[ext] || 'application/octet-stream';
+    await this.storage.persistUpload(file.path, key, contentType);
+
     // Demo: no transcode step — browser-native formats play directly => READY.
     const video = await this.prisma.video.create({
       data: {
@@ -97,7 +108,7 @@ export class VideosController {
         sizeBytes: BigInt(file.size),
         container: ext,
         status: 'ready',
-        storageKey: path.basename(file.path),
+        storageKey: key,
         readyAt: new Date(),
       },
     });
@@ -152,7 +163,8 @@ export class VideosController {
   }
 
   // Range-aware streaming. Auth via ?token= because <video> can't set headers.
-  // In prod this is a short-lived signed URL to R2/CDN (streamy.md Section 27).
+  //   r2    -> 302 redirect to a short-lived presigned R2 URL (R2 serves bytes).
+  //   local -> stream the file from disk with HTTP range support.
   @Public()
   @Get('videos/:id/stream')
   async stream(
@@ -179,7 +191,14 @@ export class VideosController {
       return;
     }
 
-    const filePath = path.resolve(UPLOAD_DIR, video.storageKey);
+    const resolved = await this.storage.resolve(video.storageKey);
+    if (resolved.kind === 'redirect') {
+      // Browser follows the redirect and does range requests against R2 directly.
+      res.redirect(302, resolved.url);
+      return;
+    }
+
+    const filePath = resolved.path;
     let stat;
     try {
       stat = statSync(filePath);

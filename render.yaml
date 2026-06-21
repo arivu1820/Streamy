@@ -1,0 +1,67 @@
+# =============================================================================
+# Streamy backend — Render Blueprint (Infrastructure as Code).
+#
+# Deploy: push this repo to GitHub, then in Render → "New +" → "Blueprint" and
+# pick this repo. Render reads render.yaml and provisions the service below.
+#
+# What this deploys: ONLY the NestJS API + Socket.IO server, built from
+# server/Dockerfile with the repo root as the build context (npm workspaces).
+# Postgres = Neon, Redis = Upstash, Object storage = Cloudflare R2 (all external,
+# all free tiers). The frontend is deployed separately on Vercel.
+#
+# Secrets (sync: false) are NOT stored in git — Render prompts for them in the
+# dashboard on first deploy. JWT_SECRET is auto-generated.
+# =============================================================================
+services:
+  - type: web
+    name: streamy-api
+    runtime: docker
+    plan: free
+    region: oregon                 # pick the region closest to your users
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: .               # repo root — required for the workspace monorepo
+    healthCheckPath: /api/v1/health
+    autoDeploy: true               # redeploy on every push to the chosen branch
+    # branch: main                 # uncomment/set to control which branch deploys
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # PORT is injected by Render automatically; the app reads process.env.PORT.
+
+      # --- Database (Neon) — paste the POOLED and DIRECT URLs from Neon -------
+      - key: DATABASE_URL          # pooled (…-pooler.neon.tech) + ?sslmode=require
+        sync: false
+      - key: DIRECT_URL            # direct (no -pooler) + ?sslmode=require — for migrations
+        sync: false
+
+      # --- Auth --------------------------------------------------------------
+      - key: JWT_SECRET
+        generateValue: true        # Render generates a strong random secret
+
+      # --- CORS / frontend origin --------------------------------------------
+      - key: WEB_ORIGIN            # e.g. https://streamy.vercel.app (comma-separated ok)
+        sync: false
+
+      # --- Redis (Upstash) ---------------------------------------------------
+      - key: REDIS_URL             # rediss://default:<password>@<host>.upstash.io:6379
+        sync: false
+
+      # --- Object storage (Cloudflare R2) ------------------------------------
+      - key: STORAGE_DRIVER
+        value: r2
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        sync: false
+      # Optional: public bucket / custom CDN domain. If set, the API redirects to
+      # "<R2_PUBLIC_BASE_URL>/<key>" instead of generating a presigned URL.
+      - key: R2_PUBLIC_BASE_URL
+        sync: false
+
+      # --- Optional Google OAuth (blank => dev-login only) -------------------
+      - key: GOOGLE_CLIENT_ID
+        sync: false

@@ -6,11 +6,13 @@ import { RealtimeService } from './realtime/realtime.service';
 import { SessionStateService } from './realtime/session-state.service';
 import { PresenceService } from './realtime/presence.service';
 import { DeleteVoteService } from './videos/delete-vote.service';
+import { StorageService } from './storage/storage.service';
 
 /**
  * Global singletons. Live-state services (RealtimeService, SessionStateService,
  * PresenceService) MUST be single instances shared across REST + gateway, so they
- * live here rather than in feature modules.
+ * live here rather than in feature modules. StorageService is global so both the
+ * upload controller and the delete-vote service share one S3/R2 client.
  */
 @Global()
 @Module({
@@ -27,6 +29,7 @@ import { DeleteVoteService } from './videos/delete-vote.service';
     SessionStateService,
     PresenceService,
     DeleteVoteService,
+    StorageService,
   ],
   exports: [
     JwtModule,
@@ -36,6 +39,7 @@ import { DeleteVoteService } from './videos/delete-vote.service';
     SessionStateService,
     PresenceService,
     DeleteVoteService,
+    StorageService,
   ],
 })
 export class SharedModule {}

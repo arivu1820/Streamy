@@ -1,0 +1,81 @@
+'use client';
+import { useEffect, useRef } from 'react';
+import { useVoice } from '../lib/useVoice';
+import { Avatar, SectionTitle, Caption } from './ui';
+import { Icon } from './icons';
+
+function RemoteAudio({ stream }: { stream: MediaStream }) {
+  const ref = useRef<HTMLAudioElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.srcObject = stream;
+  }, [stream]);
+  return <audio ref={ref} autoPlay playsInline />;
+}
+
+export function VoiceBar({ sessionId, selfUsername, voiceEnabled = true }: { sessionId: string; selfUsername: string; voiceEnabled?: boolean }) {
+  const { inVoice, muted, peers, remoteStreams, error, join, leave, toggleMute } = useVoice(sessionId);
+
+  // Auto-leave if host disables voice while we are already in it.
+  useEffect(() => {
+    if (!voiceEnabled && inVoice) leave();
+  }, [voiceEnabled, inVoice, leave]);
+
+  return (
+    <div className="card p-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <SectionTitle icon="Mic">Voice chat</SectionTitle>
+        <div className="flex items-center gap-2">
+          {inVoice ? (
+            <>
+              <button className={muted ? 'btn-danger btn-sm' : 'btn-ghost btn-sm'} onClick={toggleMute} title={muted ? 'Unmute your mic' : 'Mute your mic'}>
+                {muted ? <Icon.MicOff size={15} /> : <Icon.Mic size={15} />}
+                {muted ? 'Unmute' : 'Mute'}
+              </button>
+              <button className="btn-subtle btn-sm" onClick={leave} title="Leave voice chat">
+                <Icon.Leave size={15} /> Leave
+              </button>
+            </>
+          ) : voiceEnabled ? (
+            <button className="btn-primary btn-sm" onClick={join} title="Join voice chat (we'll ask for mic access)">
+              <Icon.Mic size={15} /> Join voice
+            </button>
+          ) : (
+            <span className="text-xs text-gray-500 flex items-center gap-1.5">
+              <Icon.MicOff size={13} /> Disabled by host
+            </span>
+          )}
+        </div>
+      </div>
+
+      <Caption icon="Volume">
+        Audio is peer-to-peer between everyone in voice — only you can mute yourself. Allow the mic prompt to join.
+      </Caption>
+
+      {error && (
+        <div className="badge-bad mt-2">
+          <Icon.MicOff size={13} /> {error}
+        </div>
+      )}
+
+      {inVoice && (
+        <div className="flex flex-wrap gap-2 mt-3">
+          <span className="badge-brand">
+            <Avatar name={selfUsername} size={18} />@{selfUsername} (you)
+            {muted && <Icon.MicOff size={12} />}
+          </span>
+          {peers.map((p) => (
+            <span key={p.userId} className="badge-neutral">
+              <Avatar name={p.username || '?'} size={18} />@{p.username}
+              {p.muted ? <Icon.MicOff size={12} className="text-bad" /> : <Icon.Mic size={12} className="text-good" />}
+            </span>
+          ))}
+          {peers.length === 0 && (
+            <span className="text-xs text-gray-500 flex items-center gap-1">
+              <Icon.Clock size={12} /> Waiting for others to join voice...
+            </span>
+          )}
+        </div>
+      )}
+
+      {Object.entries(remoteStreams).map(([userId, stream]) => (
+ 

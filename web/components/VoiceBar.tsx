@@ -12,31 +12,65 @@ function RemoteAudio({ stream }: { stream: MediaStream }) {
   return <audio ref={ref} autoPlay playsInline />;
 }
 
-export function VoiceBar({ sessionId, selfUsername, voiceEnabled = true }: { sessionId: string; selfUsername: string; voiceEnabled?: boolean }) {
-  const { inVoice, muted, peers, remoteStreams, error, join, leave, toggleMute } = useVoice(sessionId);
+export function VoiceBar({
+  sessionId,
+  selfUserId,
+  selfUsername,
+  voiceEnabled = true,
+}: {
+  sessionId: string;
+  selfUserId: string;
+  selfUsername: string;
+  voiceEnabled?: boolean;
+}) {
+  const { inVoice, muted, peers, remoteStreams, error, voicePresence, join, leave, toggleMute } =
+    useVoice(sessionId);
 
   // Auto-leave if host disables voice while we are already in it.
   useEffect(() => {
-    if (!voiceEnabled && inVoice) leave();
-  }, [voiceEnabled, inVoice, leave]);
+    if (!voiceEnabled && inVoice) leave(selfUserId);
+  }, [voiceEnabled, inVoice, leave, selfUserId]);
+
+  // Users in voice that aren't the current user (for non-joined view).
+  const othersInVoice = voicePresence.filter((p) => p.userId !== selfUserId);
+  const totalInVoice = voicePresence.length;
 
   return (
     <div className="card p-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <SectionTitle icon="Mic">Voice chat</SectionTitle>
+        <SectionTitle icon="Mic">
+          Voice chat
+          {totalInVoice > 0 && (
+            <span className="ml-2 text-xs font-normal text-gray-500">
+              {totalInVoice} in voice
+            </span>
+          )}
+        </SectionTitle>
         <div className="flex items-center gap-2">
           {inVoice ? (
             <>
-              <button className={muted ? 'btn-danger btn-sm' : 'btn-ghost btn-sm'} onClick={toggleMute} title={muted ? 'Unmute your mic' : 'Mute your mic'}>
+              <button
+                className={muted ? 'btn-danger btn-sm' : 'btn-ghost btn-sm'}
+                onClick={() => toggleMute(selfUserId)}
+                title={muted ? 'Unmute your mic' : 'Mute your mic'}
+              >
                 {muted ? <Icon.MicOff size={15} /> : <Icon.Mic size={15} />}
                 {muted ? 'Unmute' : 'Mute'}
               </button>
-              <button className="btn-subtle btn-sm" onClick={leave} title="Leave voice chat">
+              <button
+                className="btn-subtle btn-sm"
+                onClick={() => leave(selfUserId)}
+                title="Leave voice chat"
+              >
                 <Icon.Leave size={15} /> Leave
               </button>
             </>
           ) : voiceEnabled ? (
-            <button className="btn-primary btn-sm" onClick={join} title="Join voice chat (we'll ask for mic access)">
+            <button
+              className="btn-primary btn-sm"
+              onClick={() => join(selfUserId, selfUsername)}
+              title="Join voice chat (we'll ask for mic access)"
+            >
               <Icon.Mic size={15} /> Join voice
             </button>
           ) : (
@@ -48,7 +82,8 @@ export function VoiceBar({ sessionId, selfUsername, voiceEnabled = true }: { ses
       </div>
 
       <Caption icon="Volume">
-        Audio is peer-to-peer between everyone in voice — only you can mute yourself. Allow the mic prompt to join.
+        Audio is peer-to-peer between everyone in voice — only you can mute yourself. Allow the mic
+        prompt to join.
       </Caption>
 
       {error && (
@@ -57,7 +92,8 @@ export function VoiceBar({ sessionId, selfUsername, voiceEnabled = true }: { ses
         </div>
       )}
 
-      {inVoice && (
+      {inVoice ? (
+        // Full view when the current user is in voice
         <div className="flex flex-wrap gap-2 mt-3">
           <span className="badge-brand">
             <Avatar name={selfUsername} size={18} />@{selfUsername} (you)
@@ -66,7 +102,11 @@ export function VoiceBar({ sessionId, selfUsername, voiceEnabled = true }: { ses
           {peers.map((p) => (
             <span key={p.userId} className="badge-neutral">
               <Avatar name={p.username || '?'} size={18} />@{p.username}
-              {p.muted ? <Icon.MicOff size={12} className="text-bad" /> : <Icon.Mic size={12} className="text-good" />}
+              {p.muted ? (
+                <Icon.MicOff size={12} className="text-bad" />
+              ) : (
+                <Icon.Mic size={12} className="text-good" />
+              )}
             </span>
           ))}
           {peers.length === 0 && (
@@ -75,7 +115,21 @@ export function VoiceBar({ sessionId, selfUsername, voiceEnabled = true }: { ses
             </span>
           )}
         </div>
-      )}
+      ) : totalInVoice > 0 ? (
+        // Preview view when not joined — show who's in voice
+        <div className="flex flex-wrap gap-2 mt-3">
+          {voicePresence.map((p) => (
+            <span key={p.userId} className="badge-neutral">
+              <Avatar name={p.username || '?'} size={18} />@{p.username}
+              {p.muted ? (
+                <Icon.MicOff size={12} className="text-bad" />
+              ) : (
+                <Icon.Mic size={12} className="text-good" />
+              )}
+            </span>
+          ))}
+        </div>
+      ) : null}
 
       {Object.entries(remoteStreams).map(([userId, stream]) => (
         <RemoteAudio key={userId} stream={stream} />

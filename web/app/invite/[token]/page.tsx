@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { api } from '../../../lib/api';
 import { useAuth } from '../../../lib/auth';
-import { Spinner } from '../../../components/ui';
+import { Spinner, Caption } from '../../../components/ui';
+import { Icon } from '../../../components/icons';
 
 export default function InvitePage() {
   const { token } = useParams<{ token: string }>();
@@ -21,10 +22,7 @@ export default function InvitePage() {
     setBusy(true);
     setErr('');
     try {
-      // If signed in as a different email, sign in as the invited email (dev demo).
-      if (!user || user.email.toLowerCase() !== info.invitedEmail) {
-        await devLogin(info.invitedEmail);
-      }
+      if (!user || user.email.toLowerCase() !== info.invitedEmail) await devLogin(info.invitedEmail);
       const res = await api.post(`/invitations/${token}/accept`);
       router.replace(`/rooms/${res.roomId}`);
     } catch (e: any) {
@@ -51,26 +49,45 @@ export default function InvitePage() {
     };
     return (
       <div className="max-w-md mx-auto mt-10 card p-8 text-center space-y-4">
+        <div className="w-12 h-12 rounded-2xl bg-panel2 border border-edge text-gray-400 flex items-center justify-center mx-auto">
+          <Icon.Close size={22} />
+        </div>
         <div className="text-gray-200">{msg[info.status] || 'This invitation is not valid.'}</div>
-        <button className="btn-ghost" onClick={() => router.replace('/rooms')}>Go to Streamy</button>
+        <button className="btn-ghost mx-auto" onClick={() => router.replace('/rooms')}>
+          <Icon.ArrowLeft size={16} /> Go to Streamy
+        </button>
       </div>
     );
   }
 
   return (
     <div className="max-w-md mx-auto mt-10 card p-8 text-center space-y-4">
-      <div className="text-2xl">🎬</div>
+      <div className="w-14 h-14 rounded-2xl bg-brand/15 border border-brand/30 text-brand2 flex items-center justify-center mx-auto">
+        <Icon.Mail size={26} />
+      </div>
       <div>
         <div className="text-lg font-semibold">@{info.invitedBy} invited you to “{info.roomName}”</div>
-        <div className="text-sm text-gray-500 mt-1">Invitation for {info.invitedEmail}</div>
+        <div className="text-sm text-gray-500 mt-1 flex items-center justify-center gap-1.5">
+          <Icon.Mail size={14} /> {info.invitedEmail}
+        </div>
       </div>
-      <p className="text-xs text-gray-500">
-        Invites are bound to an email. Accepting will sign you in as {info.invitedEmail} (dev demo) and add you to the room.
-      </p>
+      <Caption icon="Shield">
+        Invites are bound to an email. Accepting signs you in as {info.invitedEmail} (dev demo) and adds you to the room.
+      </Caption>
       <button className="btn-primary w-full justify-center" disabled={busy} onClick={accept}>
-        {busy ? 'Joining…' : 'Accept invitation'}
+        {busy ? (
+          'Joining…'
+        ) : (
+          <>
+            <Icon.Check size={16} /> Accept invitation
+          </>
+        )}
       </button>
-      {err && <div className="text-bad text-sm">{err}</div>}
+      {err && (
+        <div className="badge-bad w-full justify-center py-1.5">
+          <Icon.Close size={13} /> {err}
+        </div>
+      )}
     </div>
   );
 }

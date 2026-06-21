@@ -1,7 +1,8 @@
 'use client';
 import { useEffect, useRef } from 'react';
 import { useVoice } from '../lib/useVoice';
-import { Avatar } from './ui';
+import { Avatar, SectionTitle, Caption, Badge } from './ui';
+import { Icon } from './icons';
 
 function RemoteAudio({ stream }: { stream: MediaStream }) {
   const ref = useRef<HTMLAudioElement>(null);
@@ -17,45 +18,56 @@ export function VoiceBar({ sessionId, selfUsername }: { sessionId: string; selfU
   return (
     <div className="card p-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="text-sm font-medium flex items-center gap-2">
-          🎙 Voice chat
-          <span className="text-xs text-gray-500 font-normal">peer-to-peer · audio only</span>
-        </div>
+        <SectionTitle icon="Mic">Voice chat</SectionTitle>
         <div className="flex items-center gap-2">
           {inVoice ? (
             <>
-              <button className={`btn ${muted ? 'btn-danger' : 'btn-ghost'}`} onClick={toggleMute}>
-                {muted ? '🔇 Unmute' : '🎤 Mute'}
+              <button className={muted ? 'btn-danger btn-sm' : 'btn-ghost btn-sm'} onClick={toggleMute} title={muted ? 'Unmute your mic' : 'Mute your mic'}>
+                {muted ? <Icon.MicOff size={15} /> : <Icon.Mic size={15} />}
+                {muted ? 'Unmute' : 'Mute'}
               </button>
-              <button className="btn-ghost" onClick={leave}>Leave voice</button>
+              <button className="btn-subtle btn-sm" onClick={leave} title="Leave voice chat">
+                <Icon.Leave size={15} /> Leave
+              </button>
             </>
           ) : (
-            <button className="btn-primary" onClick={join}>Join voice</button>
+            <button className="btn-primary btn-sm" onClick={join} title="Join voice chat (we'll ask for mic access)">
+              <Icon.Mic size={15} /> Join voice
+            </button>
           )}
         </div>
       </div>
 
-      {error && <div className="text-bad text-sm mt-2">{error}</div>}
+      <Caption icon="Volume">
+        Audio is peer-to-peer between everyone in voice — only you can mute yourself. Allow the mic prompt to join.
+      </Caption>
 
-      {inVoice && (
-        <div className="flex flex-wrap gap-3 mt-3">
-          <div className="flex items-center gap-2 text-sm">
-            <Avatar name={selfUsername} size={26} />
-            <span>@{selfUsername} (you)</span>
-            {muted && <span className="chip bg-bad/20 text-bad">muted</span>}
-          </div>
-          {peers.map((p) => (
-            <div key={p.userId} className="flex items-center gap-2 text-sm">
-              <Avatar name={p.username || '?'} size={26} />
-              <span>@{p.username}</span>
-              {p.muted && <span className="chip bg-bad/20 text-bad">muted</span>}
-            </div>
-          ))}
-          {peers.length === 0 && <span className="text-xs text-gray-500">Waiting for others to join voice…</span>}
+      {error && (
+        <div className="badge-bad mt-2">
+          <Icon.MicOff size={13} /> {error}
         </div>
       )}
 
-      {/* hidden remote audio sinks */}
+      {inVoice && (
+        <div className="flex flex-wrap gap-2 mt-3">
+          <span className="badge-brand">
+            <Avatar name={selfUsername} size={18} />@{selfUsername} (you)
+            {muted && <Icon.MicOff size={12} />}
+          </span>
+          {peers.map((p) => (
+            <span key={p.userId} className="badge-neutral">
+              <Avatar name={p.username || '?'} size={18} />@{p.username}
+              {p.muted ? <Icon.MicOff size={12} className="text-bad" /> : <Icon.Mic size={12} className="text-good" />}
+            </span>
+          ))}
+          {peers.length === 0 && (
+            <span className="text-xs text-gray-500 flex items-center gap-1">
+              <Icon.Clock size={12} /> Waiting for others to join voice…
+            </span>
+          )}
+        </div>
+      )}
+
       {Object.entries(remoteStreams).map(([userId, stream]) => (
         <RemoteAudio key={userId} stream={stream} />
       ))}

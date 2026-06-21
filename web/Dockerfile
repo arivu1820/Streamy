@@ -6,6 +6,10 @@
 # Targets:
 #   - development : `next dev` hot reload                 (docker-compose.yml)
 #   - production  : standalone Next.js server, non-root   (docker-compose.prod.yml)
+#
+# NOTE: Production hosting for Streamy is Vercel, which builds Next natively and
+# does NOT use this Dockerfile. This production stage exists so the self-hosted
+# `docker compose -f docker-compose.yml -f docker-compose.prod.yml` path also works.
 ###############################################################################
 
 ARG NODE_VERSION=22
@@ -48,26 +52,30 @@ CMD ["npm", "run", "dev", "-w", "streamy-web"]
 ###############################################################################
 # build — produce the standalone production bundle.
 # NEXT_PUBLIC_* values are inlined at build time, so pass them as build args.
+# NEXT_OUTPUT_STANDALONE flips next.config.js to `output: 'standalone'`.
 ###############################################################################
 FROM deps AS build
 ARG NEXT_PUBLIC_API_BASE=http://localhost:4000
 ENV NEXT_PUBLIC_API_BASE=${NEXT_PUBLIC_API_BASE} \
+    NEXT_OUTPUT_STANDALONE=true \
     NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1
 COPY web ./web
 RUN npm run build -w streamy-web
 
 ###############################################################################
-# production — minimal runtime using Next.js standalone output.
+# production — minimal standalone runtime. Non-root. No npm, no source.
+# Next's standalone output bundles its own pruned node_modules + server.js.
 ###############################################################################
 FROM base AS production
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000
-# Standalone output bundles only the needed node_modules.
+WORKDIR /app
+# The standalone server (monorepo layout puts the entry at web/server.js).
 COPY --from=build /app/web/.next/standalone ./
-COPY --from=build /app/web/.next/static     ./web/.next/static
-COPY --from=build /app/web/public           ./web/public
+# Static assets are not included in standalone and must be copied alongside it.
+COPY --from=build /app/web/.next/static ./web/.next/static
 USER node
 EXPOSE 3000
 CMD ["node", "web/server.js"]

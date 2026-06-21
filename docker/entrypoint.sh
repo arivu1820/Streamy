@@ -21,6 +21,10 @@ set -e
 APP_DIR="${APP_DIR:-/app}"
 cd "$APP_DIR"
 
+# Prisma uses DIRECT_URL for `migrate deploy`. If the platform only provides a
+# single DATABASE_URL (e.g. a simple setup), fall back to it so migrations run.
+export DIRECT_URL="${DIRECT_URL:-$DATABASE_URL}"
+
 PRISMA="npx --workspace streamy-server prisma"
 
 # ---------------------------------------------------------------------------

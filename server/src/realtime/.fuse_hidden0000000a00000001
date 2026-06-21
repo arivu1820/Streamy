@@ -22,7 +22,7 @@ const CHANGE_VOTE_MS = 30_000;
 
 @WebSocketGateway({
   namespace: '/rt',
-  cors: { origin: (process.env.WEB_ORIGIN || 'http://localhost:3000').split(',').map((o) => o.trim()).filter(Boolean), credentials: true },
+  cors: { origin: (process.env.WEB_ORIGIN || 'http://localhost:3000').split(','), credentials: true },
 })
 export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer() server!: Server;

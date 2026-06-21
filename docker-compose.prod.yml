@@ -9,8 +9,8 @@
 #   * Secrets come from the environment / .env, never hard-coded defaults.
 #   * Backend applies migrations via `prisma migrate deploy` on boot.
 #
-# Stage 2+ (managed Postgres/Redis, R2, nginx, horizontal scaling) is described
-# in DOCKER_ARCHITECTURE.md. This file is the on-ramp.
+# NOTE: the cloud path (Render + Neon + Upstash + R2) does NOT use this file.
+# This is for self-hosting the whole stack on one machine.
 # =============================================================================
 
 name: streamy
@@ -34,12 +34,21 @@ services:
     environment:
       NODE_ENV: production
       PORT: 4000
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-streamy}?schema=public
-      REDIS_URL: redis://redis:6379
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-streamy}?schema=public}
+      DIRECT_URL: ${DIRECT_URL:-postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-streamy}?schema=public}
+      # Local compose Redis by default; set REDIS_URL=rediss://...upstash.io to use Upstash.
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       JWT_SECRET: ${JWT_SECRET:?set a strong secret in .env}
       WEB_ORIGIN: ${WEB_ORIGIN:?set your public origin in .env}
       UPLOAD_DIR: /app/server/storage
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      # Object storage. Default local disk; set STORAGE_DRIVER=r2 + R2_* for Cloudflare R2.
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_BUCKET: ${R2_BUCKET:-}
+      R2_PUBLIC_BASE_URL: ${R2_PUBLIC_BASE_URL:-}
     volumes:
       - streamy_uploads:/app/server/storage   # until R2 (Stage 2)
     # No source mounts, no anonymous node_modules — the image is the artifact.

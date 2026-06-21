@@ -71,7 +71,13 @@ services:
       PORT: 4000
       # Service-name DNS — NOT localhost — to reach Postgres/Redis across the network.
       DATABASE_URL: postgresql://${POSTGRES_USER:-streamy}:${POSTGRES_PASSWORD:-streamy}@postgres:5432/${POSTGRES_DB:-streamy}?schema=public
+      # Prisma needs a direct (unpooled) URL for migrations. Locally there is
+      # no pooler, so DIRECT_URL == DATABASE_URL.
+      DIRECT_URL: postgresql://${POSTGRES_USER:-streamy}:${POSTGRES_PASSWORD:-streamy}@postgres:5432/${POSTGRES_DB:-streamy}?schema=public
       REDIS_URL: redis://redis:6379
+      # Local dev keeps videos on the disk-backed named volume below.
+      # Production (Render) sets STORAGE_DRIVER=r2 + R2_* to use Cloudflare R2.
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
       JWT_SECRET: ${JWT_SECRET:-dev-streamy-secret-change-in-prod}
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
       UPLOAD_DIR: /app/server/storage

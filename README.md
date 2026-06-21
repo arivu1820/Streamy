@@ -525,3 +525,35 @@ See **[`DOCKER_ARCHITECTURE.md`](./DOCKER_ARCHITECTURE.md)** for the full produc
 ---
 
 **Happy hacking!** If something here is unclear or out of date, please open an issue or PR so the next developer has an even smoother setup.
+
+---
+
+## Redis: local development & production
+
+Streamy uses Redis as the **Socket.IO adapter** so realtime broadcasts (chat, presence, playback sync) fan out reliably. It is wired in `server/src/realtime/redis-io.adapter.ts` and activated in `server/src/main.ts`.
+
+### How it behaves
+- **Local (Docker):** `REDIS_URL=redis://redis:6379` (the bundled `redis` service). Set automatically by `docker-compose.yml`.
+- **Local (host-direct):** `REDIS_URL=redis://localhost:6379` against the Dockerized Redis.
+- **Production:** set `REDIS_URL` to your **Upstash** TLS endpoint, e.g. `rediss://default:PASSWORD@host.upstash.io:6379`. TLS is auto-detected from the `rediss://` scheme.
+- **Missing / unreachable Redis:** the app **does not crash** — it logs a warning and falls back to the in-memory adapter (correct for a single instance). This keeps the dev workflow frictionless.
+
+The adapter adds connection **retry/backoff** and **startup logging**:
+```
+[RedisIoAdapter] Redis pub client ready.
+[RedisIoAdapter] Connected to Redis (rediss://***:***@...) — Socket.IO is using the Redis adapter.
+```
+or, with no Redis:
+```
+[Bootstrap] REDIS_URL not set — Socket.IO using the in-memory adapter (single instance only).
+```
+
+### Setup steps
+1. **Local:** nothing to do — `docker compose up` starts Redis and sets `REDIS_URL`.
+2. **Production:** create a database at [upstash.com](https://upstash.com) → copy the `rediss://` URL → set it as `REDIS_URL` on Render.
+
+> Note: the Redis adapter fans out Socket.IO **broadcasts**. The authoritative live-session state (`SessionStateService`/`PresenceService`) is still in-process, so production runs as a **single** instance. See `DEPLOYMENT.md` §1 for the full rationale.
+
+## Deploying to the cloud (free tiers)
+
+Full step-by-step instructions for **Vercel + Render + Neon + Upstash + Cloudflare R2** are in **[`DEPLOYMENT.md`](./DEPLOYMENT.md)**, including environment-variable tables, WebSocket/CORS setup, Prisma migration workflow, a production checklist, and troubleshooting.

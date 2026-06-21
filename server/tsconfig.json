@@ -13,10 +13,11 @@
     "moduleResolution": "node",
     "resolveJsonModule": true,
     "outDir": "./dist",
+    "rootDir": "./src",
     "baseUrl": "./",
     "declaration": false,
     "sourceMap": true
   },
-  "include": ["src/**/*", "prisma/**/*", "test/**/*"],
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "src/**/*.mts"]
 }

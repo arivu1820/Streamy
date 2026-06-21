@@ -45,7 +45,7 @@ export class RoomsService {
       include: { room: true },
       orderBy: { joinedAt: 'desc' },
     });
-    const rooms = [];
+    const rooms: any[] = [];
     for (const m of memberships) {
       const [memberCount, videoCount, activeSessions] = await Promise.all([
         this.prisma.activeMemberCount(m.roomId),

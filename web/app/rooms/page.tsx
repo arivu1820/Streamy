@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { api } from '../../lib/api';
 import { useRequireAuth } from '../../lib/auth';
@@ -11,6 +11,8 @@ export default function RoomsPage() {
   const [rooms, setRooms] = useState<any[] | null>(null);
   const [name, setName] = useState('');
   const [creating, setCreating] = useState(false);
+  const [showHint, setShowHint] = useState(false);
+  const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   async function load() {
     setRooms(await api.get('/rooms'));
@@ -19,8 +21,19 @@ export default function RoomsPage() {
     if (user) load();
   }, [user]);
 
+  function dismissHint() {
+    if (hintTimer.current) clearTimeout(hintTimer.current);
+    setShowHint(false);
+  }
+
   async function create() {
-    if (!name.trim()) return;
+    if (!name.trim()) {
+      setShowHint(true);
+      if (hintTimer.current) clearTimeout(hintTimer.current);
+      hintTimer.current = setTimeout(() => setShowHint(false), 2000);
+      return;
+    }
+    dismissHint();
     setCreating(true);
     try {
       await api.post('/rooms', { name: name.trim() });
@@ -41,22 +54,59 @@ export default function RoomsPage() {
         subtitle="Private spaces for your friends — no owner or admin, everyone has equal rights."
         actions={
           <div className="flex gap-2">
+            <input
+              className="input w-56"
+              placeholder="New room name"
+              value={name}
+              onChange={(e) => { setName(e.target.value); if (showHint) dismissHint(); }}
+              onKeyDown={(e) => e.key === 'Enter' && create()}
+            />
             <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">
-                <Icon.Plus size={16} />
-              </span>
-              <input
-                className="input pl-9 w-56"
-                placeholder="New room name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && create()}
-              />
+              <button className="btn-primary" disabled={creating} onClick={create}>
+                Create room
+              </button>
+              {showHint && (
+                <div
+                  onClick={dismissHint}
+                  className="absolute right-0 top-full mt-2 z-50 cursor-pointer"
+                  style={{ animation: 'fadeInUp 0.18s ease' }}
+                >
+                  <div
+                    className="relative px-3.5 py-2 rounded-xl text-sm font-medium text-white select-none"
+                    style={{
+                      background: 'linear-gradient(135deg, #1d2230 0%, #242a3a 100%)',
+                      border: '1px solid rgba(124,92,255,0.35)',
+                      boxShadow: '0 8px 24px -4px rgba(0,0,0,0.5), 0 0 0 1px rgba(124,92,255,0.1)',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    <span className="text-brand2 mr-1.5">✦</span>
+                    Enter a room name first
+                    {/* tail */}
+                    <span
+                      className="absolute -top-[7px] right-5"
+                      style={{
+                        width: 0,
+                        height: 0,
+                        borderLeft: '7px solid transparent',
+                        borderRight: '7px solid transparent',
+                        borderBottom: '7px solid rgba(124,92,255,0.35)',
+                      }}
+                    />
+                    <span
+                      className="absolute -top-[5px] right-[21px]"
+                      style={{
+                        width: 0,
+                        height: 0,
+                        borderLeft: '6px solid transparent',
+                        borderRight: '6px solid transparent',
+                        borderBottom: '6px solid #1d2230',
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
-            <button className="btn-primary" disabled={creating || !name.trim()} onClick={create}>
-              <Icon.Plus size={16} />
-              Create room
-            </button>
           </div>
         }
       />

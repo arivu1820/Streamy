@@ -1,0 +1,126 @@
+# =============================================================================
+# Streamy — local development stack
+#   docker compose up
+#     web      -> http://localhost:3000   (Next.js, hot reload)
+#     server   -> http://localhost:4000   (NestJS + Socket.IO, hot reload)
+#     postgres -> internal :5432 (published 5432 for your DB GUI)
+#     redis    -> internal :6379 (published 6379 for redis-cli)
+#
+# Design notes:
+#   * Build context is the repo root so npm workspaces + lockfile resolve.
+#   * Source is bind-mounted for hot reload; node_modules/.next/.prisma live in
+#     ANONYMOUS VOLUMES so the host never shadows the container's installed deps
+#     (the #1 cause of "works locally, breaks in Docker" with workspaces).
+#   * Uploads + Postgres data live in NAMED VOLUMES so they survive rebuilds.
+#   * Services talk over the default `streamy` network by service name.
+# =============================================================================
+
+name: streamy
+
+services:
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-streamy}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-streamy}
+      POSTGRES_DB: ${POSTGRES_DB:-streamy}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432" # host access for psql / TablePlus / Prisma Studio
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-streamy} -d ${POSTGRES_DB:-streamy}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [streamy]
+
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # appendonly persistence so dev-time Redis state survives restarts.
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [streamy]
+
+  # ---------------------------------------------------------------------------
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+      target: development
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      PORT: 4000
+      # Service-name DNS — NOT localhost — to reach Postgres/Redis across the network.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-streamy}:${POSTGRES_PASSWORD:-streamy}@postgres:5432/${POSTGRES_DB:-streamy}?schema=public
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-dev-streamy-secret-change-in-prod}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+      UPLOAD_DIR: /app/server/storage
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./server:/app/server          # source -> hot reload
+      - ./package.json:/app/package.json
+      - ./package-lock.json:/app/package-lock.json
+      - ./tsconfig.json:/app/tsconfig.json
+      # Anonymous volumes shadow bind-mounted dirs so container deps/artifacts win:
+      - /app/node_modules             # hoisted workspace deps (incl. .prisma client)
+      - /app/server/node_modules
+      # Named volume for uploads -> persists across rebuilds, prod-aligned (R2 later):
+      - streamy_uploads:/app/server/storage
+    networks: [streamy]
+
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+      target: development
+    restart: unless-stopped
+    depends_on:
+      - server
+    environment:
+      NODE_ENV: development
+      # Browser-side calls hit the host-published port, so localhost is correct.
+      NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:4000}
+      WATCHPACK_POLLING: "true"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./web:/app/web                # source -> hot reload
+      - ./package.json:/app/package.json
+      - ./package-lock.json:/app/package-lock.json
+      - /app/node_modules             # hoisted workspace deps
+      - /app/web/node_modules
+      - /app/web/.next                # keep Next build cache inside the container
+    networks: [streamy]
+
+# -----------------------------------------------------------------------------
+volumes:
+  postgres_data:
+  redis_data:
+  streamy_uploads:
+
+networks:
+  streamy:
+    driver: bridge

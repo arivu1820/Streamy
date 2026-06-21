@@ -1,0 +1,57 @@
+# =============================================================================
+# Streamy — production-aligned override (Stage 1: single VPS + Docker Compose).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# What changes vs. dev:
+#   * Builds the `production` image targets (compiled JS / Next standalone).
+#   * No source bind mounts, no anonymous node_modules volumes, no hot reload.
+#   * Secrets come from the environment / .env, never hard-coded defaults.
+#   * Backend applies migrations via `prisma migrate deploy` on boot.
+#
+# Stage 2+ (managed Postgres/Redis, R2, nginx, horizontal scaling) is described
+# in DOCKER_ARCHITECTURE.md. This file is the on-ramp.
+# =============================================================================
+
+name: streamy
+
+services:
+  postgres:
+    ports: []                       # do not expose the DB publicly in prod
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-streamy}
+
+  redis:
+    ports: []
+
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+      target: production
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-streamy}?schema=public
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:?set a strong secret in .env}
+      WEB_ORIGIN: ${WEB_ORIGIN:?set your public origin in .env}
+      UPLOAD_DIR: /app/server/storage
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+    volumes:
+      - streamy_uploads:/app/server/storage   # until R2 (Stage 2)
+    # No source mounts, no anonymous node_modules — the image is the artifact.
+
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+      target: production
+      args:
+        # Inlined into the client bundle at build time — must be the PUBLIC URL.
+        NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:?set your public API URL in .env}
+    environment:
+      NODE_ENV: production
+    volumes: []

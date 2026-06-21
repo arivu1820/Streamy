@@ -1,0 +1,41 @@
+# Root build context ignore (both Dockerfiles build from the repo root).
+# Keep the context small + deterministic. CRITICAL: excludes server/storage,
+# which holds multi-GB uploaded videos and must never enter an image layer.
+
+# Dependencies & build output (installed/compiled inside the image)
+**/node_modules
+server/dist
+web/.next
+web/out
+*.tsbuildinfo
+
+# Uploaded media — persisted via volumes, never baked into the image
+server/storage
+server/uploads
+
+# Local databases / Prisma dev artifacts (SQLite is retired)
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+
+# Env & secrets — injected at runtime, not build time
+**/.env
+**/.env.*
+!**/.env.example
+
+# Docker / git / CI metadata
+.git
+.gitignore
+**/Dockerfile
+**/.dockerignore
+docker-compose*.yml
+
+# Editor / OS noise
+**/.DS_Store
+**/.vscode
+**/.idea
+**/*.log
+npm-debug.log*
+
+# Tests & docs not needed at runtime
+**/coverage

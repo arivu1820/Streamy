@@ -1,14 +1,18 @@
-// Streamy data model (easy-run build: SQLite).
-// Faithful to streamy.md Section 19. SQLite has no native enums/citext, so
-// enum-like fields are strings validated in code, and emails/usernames are
-// stored lowercased for case-insensitive uniqueness.
+// Streamy data model (PostgreSQL).
+// Faithful to streamy.md Section 19. Enum-like fields remain strings validated
+// in code (preserved from the original SQLite model to avoid an architecture
+// regression — do NOT convert to native Postgres enums in this migration).
+// Emails/usernames are stored lowercased for case-insensitive uniqueness.
 
 generator client {
   provider = "prisma-client-js"
+  // Ensures the query engine is built for the Linux container (Debian/OpenSSL 3)
+  // as well as the host, so `prisma generate` output works in Docker and locally.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 

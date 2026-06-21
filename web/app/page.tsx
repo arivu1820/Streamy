@@ -2,6 +2,7 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../lib/auth';
+import { Spinner } from '../components/ui';
 
 export default function Home() {
   const { user, ready } = useAuth();
@@ -10,5 +11,9 @@ export default function Home() {
     if (!ready) return;
     router.replace(user ? '/rooms' : '/login');
   }, [ready, user, router]);
-  return <div className="text-gray-500 text-sm">Loading…</div>;
+  return (
+    <div className="mt-10 flex justify-center">
+      <Spinner label="Loading Streamy…" />
+    </div>
+  );
 }

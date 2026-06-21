@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { useAuth } from '../lib/auth';
 import { Avatar, relTime } from './ui';
+import { Icon } from './icons';
 
 export function ChatPanel({ roomId, compact }: { roomId: string; compact?: boolean }) {
   const { user } = useAuth();
@@ -22,7 +23,6 @@ export function ChatPanel({ roomId, compact }: { roomId: string; compact?: boole
     const onCreated = (m: any) => {
       if (m.roomId !== roomId) return;
       setMessages((prev) => {
-        // reconcile optimistic by clientNonce
         const idx = prev.findIndex((x) => x.clientNonce && x.clientNonce === m.clientNonce);
         if (idx >= 0) {
           const copy = [...prev];
@@ -70,7 +70,15 @@ export function ChatPanel({ roomId, compact }: { roomId: string; compact?: boole
       const clientNonce = Math.random().toString(36).slice(2);
       setMessages((prev) => [
         ...prev,
-        { id: 'tmp_' + clientNonce, clientNonce, authorUserId: user.id, authorUsername: user.username, body, createdAt: new Date().toISOString(), pending: true },
+        {
+          id: 'tmp_' + clientNonce,
+          clientNonce,
+          authorUserId: user.id,
+          authorUsername: user.username,
+          body,
+          createdAt: new Date().toISOString(),
+          pending: true,
+        },
       ]);
       s.emit('chat.message.send', { roomId, body, clientNonce });
     }
@@ -79,14 +87,22 @@ export function ChatPanel({ roomId, compact }: { roomId: string; compact?: boole
 
   return (
     <div className={`card flex flex-col ${compact ? 'h-[60vh]' : 'h-[70vh]'}`}>
-      <div className="px-4 py-2.5 border-b border-edge text-sm font-medium flex items-center justify-between">
-        <span>Room chat</span>
-        <span className="text-xs text-gray-500">permanent · survives every session</span>
+      <div className="px-4 py-3 border-b border-edge flex items-center justify-between">
+        <span className="section-title">
+          <span className="text-brand2">
+            <Icon.Chat size={16} />
+          </span>
+          Room chat
+        </span>
+        <span className="text-[11px] text-gray-500 flex items-center gap-1">
+          <Icon.Shield size={12} /> permanent
+        </span>
       </div>
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.length === 0 && (
-          <div className="text-gray-500 text-sm text-center py-8">
-            Say hi 👋 — this chat is permanent and stays here across every session and video.
+          <div className="text-gray-500 text-sm text-center py-8 flex flex-col items-center gap-2">
+            <Icon.Chat size={26} className="text-gray-600" />
+            Say hi — this chat is permanent and stays here across every session and video.
           </div>
         )}
         {messages.map((m) => (
@@ -106,21 +122,23 @@ export function ChatPanel({ roomId, compact }: { roomId: string; compact?: boole
               )}
             </div>
             {m.authorUserId === user?.id && !m.deleted && !m.pending && (
-              <div className="opacity-0 group-hover:opacity-100 flex gap-1 text-[10px]">
+              <div className="opacity-0 group-hover:opacity-100 flex gap-1 transition">
                 <button
-                  className="text-gray-500 hover:text-gray-200"
+                  className="icon-btn w-7 h-7"
+                  title="Edit message"
                   onClick={() => {
                     setEditing(m.id);
                     setText(m.body);
                   }}
                 >
-                  edit
+                  <Icon.Edit size={13} />
                 </button>
                 <button
-                  className="text-gray-500 hover:text-bad"
+                  className="icon-btn w-7 h-7 hover:text-bad"
+                  title="Delete message"
                   onClick={() => getSocket().emit('chat.message.delete', { roomId, messageId: m.id })}
                 >
-                  delete
+                  <Icon.Trash size={13} />
                 </button>
               </div>
             )}
@@ -128,11 +146,15 @@ export function ChatPanel({ roomId, compact }: { roomId: string; compact?: boole
         ))}
         <div ref={bottomRef} />
       </div>
-      {typing.length > 0 && <div className="px-4 text-[11px] text-gray-500">{typing.join(', ')} typing…</div>}
+      {typing.length > 0 && (
+        <div className="px-4 text-[11px] text-gray-500 flex items-center gap-1">
+          <Icon.Edit size={11} /> {typing.join(', ')} typing…
+        </div>
+      )}
       <div className="p-3 border-t border-edge flex gap-2">
         <input
           className="input"
-          placeholder={editing ? 'Edit message…' : 'Message the room…'}
+          placeholder={editing ? 'Edit your message…' : 'Message the room…'}
           value={text}
           onChange={(e) => {
             setText(e.target.value);
@@ -141,12 +163,19 @@ export function ChatPanel({ roomId, compact }: { roomId: string; compact?: boole
           onKeyDown={(e) => e.key === 'Enter' && send()}
         />
         {editing && (
-          <button className="btn-ghost" onClick={() => { setEditing(null); setText(''); }}>
-            Cancel
+          <button
+            className="btn-subtle"
+            title="Cancel edit"
+            onClick={() => {
+              setEditing(null);
+              setText('');
+            }}
+          >
+            <Icon.Close size={16} />
           </button>
         )}
-        <button className="btn-primary" onClick={send} disabled={!text.trim()}>
-          {editing ? 'Save' : 'Send'}
+        <button className="btn-primary" onClick={send} disabled={!text.trim()} title={editing ? 'Save edit' : 'Send message'}>
+          {editing ? <Icon.Check size={16} /> : <Icon.Send size={16} />}
         </button>
       </div>
     </div>

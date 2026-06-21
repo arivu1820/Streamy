@@ -1,4 +1,9 @@
 import 'reflect-metadata';
+// Allow BigInt fields (e.g. video sizeBytes up to 10 GB) to serialize in JSON
+// responses as plain numbers (safe: 10 GB is far below Number.MAX_SAFE_INTEGER).
+(BigInt.prototype as any).toJSON = function () {
+  return Number(this);
+};
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { json } from 'express';

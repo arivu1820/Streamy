@@ -88,7 +88,7 @@ model Video {
   uploadedById     String
   title            String
   originalFilename String
-  sizeBytes        Int
+  sizeBytes        BigInt // bytes; up to 10 GB, so must be 64-bit (not Int)
   container        String
   durationMs       Int?
   status           String    @default("uploading") // uploading|processing|ready|failed|deleting|deleted

@@ -7,33 +7,125 @@
 }
 html,
 body {
-  background: #0b0d12;
+  background:
+    radial-gradient(1200px 600px at 80% -10%, rgba(124, 92, 255, 0.12), transparent 60%),
+    radial-gradient(900px 500px at -10% 10%, rgba(56, 189, 248, 0.08), transparent 55%), #0b0d12;
+  background-attachment: fixed;
   color: #e7eaf0;
 }
 * {
   -webkit-font-smoothing: antialiased;
 }
 
+/* consistent thin scrollbars */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #2a3142;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #3a4358;
+  background-clip: content-box;
+}
+
 @layer components {
+  /* ---------- buttons (one shape language) ---------- */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition disabled:opacity-40 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition
+      focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 focus-visible:ring-offset-2 focus-visible:ring-offset-ink
+      disabled:opacity-40 disabled:cursor-not-allowed;
   }
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition bg-brand hover:bg-brand2 text-white disabled:opacity-40 disabled:cursor-not-allowed;
+    @apply btn text-white;
+    background-image: linear-gradient(180deg, #8a6bff, #6f4dff);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.12) inset, 0 6px 18px -8px rgba(124, 92, 255, 0.7);
+  }
+  .btn-primary:hover {
+    background-image: linear-gradient(180deg, #9d86ff, #7c5cff);
   }
   .btn-ghost {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition bg-panel2 hover:bg-edge text-gray-200 border border-edge disabled:opacity-40 disabled:cursor-not-allowed;
+    @apply btn bg-panel2/80 hover:bg-edge text-gray-200 border border-edge;
+  }
+  .btn-subtle {
+    @apply btn bg-transparent hover:bg-panel2 text-gray-300 border border-transparent hover:border-edge;
   }
   .btn-danger {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition bg-bad/20 hover:bg-bad/30 text-bad border border-bad/40;
+    @apply btn bg-bad/15 hover:bg-bad/25 text-bad border border-bad/40;
   }
+  .btn-good {
+    @apply btn bg-good/15 hover:bg-good/25 text-good border border-good/40;
+  }
+  .btn-sm {
+    @apply px-2.5 py-1.5 text-xs rounded-md;
+  }
+  .icon-btn {
+    @apply inline-flex items-center justify-center rounded-lg w-9 h-9 text-gray-300 bg-panel2/70 border border-edge
+      hover:bg-edge hover:text-white transition focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/60;
+  }
+
+  /* ---------- surfaces ---------- */
   .card {
-    @apply bg-panel border border-edge rounded-xl;
+    @apply bg-panel/90 border border-edge rounded-2xl shadow-[0_1px_0_rgba(255,255,255,0.03)_inset];
   }
+  .card-hover {
+    @apply transition hover:border-brand/60 hover:bg-panel;
+  }
+
+  /* ---------- captions (self-explanatory helper text) ---------- */
+  .caption {
+    @apply flex items-start gap-1.5 text-xs text-gray-400 leading-relaxed;
+  }
+  .caption-icon {
+    @apply text-gray-500 mt-0.5 shrink-0;
+  }
+
+  /* ---------- badges / pills ---------- */
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium border;
+  }
+  .badge-neutral {
+    @apply badge bg-panel2 border-edge text-gray-300;
+  }
+  .badge-brand {
+    @apply badge bg-brand/15 border-brand/40 text-brand2;
+  }
+  .badge-good {
+    @apply badge bg-good/15 border-good/40 text-good;
+  }
+  .badge-warn {
+    @apply badge bg-warn/15 border-warn/40 text-warn;
+  }
+  .badge-bad {
+    @apply badge bg-bad/15 border-bad/40 text-bad;
+  }
+
+  /* ---------- inputs ---------- */
   .input {
-    @apply w-full rounded-lg bg-panel2 border border-edge px-3 py-2 text-sm outline-none focus:border-brand;
+    @apply w-full rounded-lg bg-panel2/80 border border-edge px-3 py-2 text-sm text-gray-100 placeholder:text-gray-600
+      outline-none transition focus:border-brand/70 focus:ring-2 focus:ring-brand/25;
   }
-  .chip {
-    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs;
+  .label {
+    @apply block text-xs font-medium text-gray-300 mb-1.5;
+  }
+
+  /* ---------- section header inside cards ---------- */
+  .section-title {
+    @apply flex items-center gap-2 text-sm font-semibold text-gray-100;
+  }
+
+  /* ---------- tabs ---------- */
+  .tab {
+    @apply inline-flex items-center gap-2 px-4 py-2.5 text-sm border-b-2 -mb-px transition;
+  }
+  .tab-active {
+    @apply tab border-brand text-white;
+  }
+  .tab-idle {
+    @apply tab border-transparent text-gray-400 hover:text-gray-200 hover:border-edge;
   }
 }

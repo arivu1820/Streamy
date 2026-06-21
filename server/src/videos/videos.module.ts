@@ -124,7 +124,7 @@ export class VideosController {
       include: { uploadedBy: true },
       orderBy: { createdAt: 'desc' },
     });
-    const out = [];
+    const out: any[] = [];
     for (const v of videos) {
       const tally = await this.votes.tally(v.id, roomId);
       const myVote = await this.prisma.videoDeleteVote.findUnique({

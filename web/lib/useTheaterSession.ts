@@ -5,11 +5,6 @@ import { api } from './api';
 import { getSocket } from './socket';
 import { fmtTime } from '../components/ui';
 
-/**
- * All live watch-session wiring (REST detail + Socket.IO playback governance,
- * presence, late-join sync) for the Theater page. Keeping it in a hook keeps the
- * page component small and focused on layout.
- */
 export function useTheaterSession(sessionId: string, user: any) {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -27,8 +22,12 @@ export function useTheaterSession(sessionId: string, user: any) {
   const [hostOffer, setHostOffer] = useState<any>(null);
   const [roomVideos, setRoomVideos] = useState<any[]>([]);
   const [ended, setEnded] = useState(false);
+  const [memberPermissions, setMemberPermissions] = useState<Record<string, { chat: boolean; voice: boolean; playback: boolean; request: boolean }>>({});
 
   const isHost = hostId === user?.id;
+  const myPermissions = user
+    ? (memberPermissions[user.id] ?? { chat: true, voice: true, playback: true, request: true })
+    : { chat: true, voice: true, playback: true, request: true };
 
   const applyState = useCallback((positionMs: number, serverTs: number, playing: boolean) => {
     const v = videoRef.current;
@@ -67,6 +66,7 @@ export function useTheaterSession(sessionId: string, user: any) {
       if (!snap) return;
       setHostId(snap.hostUserId);
       setParticipants(snap.participants || []);
+      if (snap.memberPermissions) setMemberPermissions(snap.memberPermissions);
       applyState(snap.positionMs, snap.serverTs, snap.isPlaying);
     };
     const onJoined = (p: any) =>
@@ -110,14 +110,18 @@ export function useTheaterSession(sessionId: string, user: any) {
     const onHostOffered = (e: any) => {
       if (e.targetUserId === user.id) setHostOffer(e);
     };
+    const onPermissionsUpdated = (e: any) => {
+      setMemberPermissions((prev) => ({ ...prev, [e.userId]: e.permissions }));
+    };
     const onEnded = () => setEnded(true);
     const onErr = (e: any) => {
       const map: Record<string, string> = {
-        NOT_HOST: 'Only the session host can do that. Ask the host or request control.',
+        NOT_HOST: 'Only the session host can do that.',
         SESSION_ENDED: 'This session has ended.',
         STALE_REQUEST: 'That request is no longer valid.',
         CHANGE_VOTE_IN_PROGRESS: 'A change-video vote is already in progress.',
         VIDEO_NOT_READY: 'That video is not ready.',
+        PERMISSION_DENIED: 'The host has restricted that action for you.',
       };
       setBanner(map[e.code] || e.code);
     };
@@ -127,7 +131,9 @@ export function useTheaterSession(sessionId: string, user: any) {
       ['playback.paused', onPaused], ['playback.played', onPlayed], ['playback.seeked', onSeeked],
       ['host.changed', onHostChanged], ['playback.request.created', onReqCreated], ['playback.request.resolved', onReqResolved],
       ['playback.change.opened', onChangeOpened], ['playback.change.voted', onChangeVoted], ['playback.video.changed', onVideoChanged],
-      ['playback.change.rejected', onChangeRejected], ['host.transfer.offered', onHostOffered], ['session.ended', onEnded], ['error', onErr],
+      ['playback.change.rejected', onChangeRejected], ['host.transfer.offered', onHostOffered],
+      ['member.permissions.updated', onPermissionsUpdated],
+      ['session.ended', onEnded], ['error', onErr],
     ];
     map.forEach(([ev, fn]) => s.on(ev, fn));
     const hb = setInterval(() => s.emit('presence.heartbeat'), 25000);
@@ -156,5 +162,6 @@ export function useTheaterSession(sessionId: string, user: any) {
   return {
     videoRef, detail, nowPlaying, hostId, isHost, isPlaying, participants, duration, setDuration,
     clock, banner, requests, changeVote, hostOffer, setHostOffer, roomVideos, ended, emit,
+    memberPermissions, myPermissions,
   };
 }

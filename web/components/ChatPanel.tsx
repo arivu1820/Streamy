@@ -6,7 +6,7 @@ import { useAuth } from '../lib/auth';
 import { Avatar, relTime } from './ui';
 import { Icon } from './icons';
 
-export function ChatPanel({ roomId, compact }: { roomId: string; compact?: boolean }) {
+export function ChatPanel({ roomId, compact, chatEnabled = true }: { roomId: string; compact?: boolean; chatEnabled?: boolean }) {
   const { user } = useAuth();
   const [messages, setMessages] = useState<any[]>([]);
   const [text, setText] = useState('');
@@ -61,7 +61,7 @@ export function ChatPanel({ roomId, compact }: { roomId: string; compact?: boole
 
   function send() {
     const body = text.trim();
-    if (!body) return;
+    if (!body || !chatEnabled) return;
     const s = getSocket();
     if (editing) {
       s.emit('chat.message.edit', { roomId, messageId: editing, body });
@@ -113,7 +113,7 @@ export function ChatPanel({ roomId, compact }: { roomId: string; compact?: boole
                 <span className="text-sm font-medium">@{m.authorUsername}</span>
                 <span className="text-[10px] text-gray-600">{relTime(m.createdAt)}</span>
                 {m.edited && <span className="text-[10px] text-gray-600">(edited)</span>}
-                {m.pending && <span className="text-[10px] text-gray-600">· sending</span>}
+                {m.pending && <span className="text-[10px] text-gray-600">sending</span>}
               </div>
               {m.deleted ? (
                 <div className="text-sm text-gray-600 italic">This message was deleted</div>
@@ -148,36 +148,42 @@ export function ChatPanel({ roomId, compact }: { roomId: string; compact?: boole
       </div>
       {typing.length > 0 && (
         <div className="px-4 text-[11px] text-gray-500 flex items-center gap-1">
-          <Icon.Edit size={11} /> {typing.join(', ')} typing…
+          <Icon.Edit size={11} /> {typing.join(', ')} typing...
         </div>
       )}
-      <div className="p-3 border-t border-edge flex gap-2">
-        <input
-          className="input"
-          placeholder={editing ? 'Edit your message…' : 'Message the room…'}
-          value={text}
-          onChange={(e) => {
-            setText(e.target.value);
-            getSocket().emit('chat.typing', { roomId, isTyping: e.target.value.length > 0 });
-          }}
-          onKeyDown={(e) => e.key === 'Enter' && send()}
-        />
-        {editing && (
-          <button
-            className="btn-subtle"
-            title="Cancel edit"
-            onClick={() => {
-              setEditing(null);
-              setText('');
+      {!chatEnabled ? (
+        <div className="px-4 py-2 border-t border-edge text-xs text-gray-500 flex items-center gap-1.5">
+          <Icon.Shield size={12} /> The host has disabled chat for you.
+        </div>
+      ) : (
+        <div className="p-3 border-t border-edge flex gap-2">
+          <input
+            className="input"
+            placeholder={editing ? 'Edit your message...' : 'Message the room...'}
+            value={text}
+            onChange={(e) => {
+              setText(e.target.value);
+              getSocket().emit('chat.typing', { roomId, isTyping: e.target.value.length > 0 });
             }}
-          >
-            <Icon.Close size={16} />
+            onKeyDown={(e) => e.key === 'Enter' && send()}
+          />
+          {editing && (
+            <button
+              className="btn-subtle"
+              title="Cancel edit"
+              onClick={() => {
+                setEditing(null);
+                setText('');
+              }}
+            >
+              <Icon.Close size={16} />
+            </button>
+          )}
+          <button className="btn-primary" onClick={send} disabled={!text.trim()} title={editing ? 'Save edit' : 'Send message'}>
+            {editing ? <Icon.Check size={16} /> : <Icon.Send size={16} />}
           </button>
-        )}
-        <button className="btn-primary" onClick={send} disabled={!text.trim()} title={editing ? 'Save edit' : 'Send message'}>
-          {editing ? <Icon.Check size={16} /> : <Icon.Send size={16} />}
-        </button>
-      </div>
+        </div>
+      )}
     </div>
   );
 }

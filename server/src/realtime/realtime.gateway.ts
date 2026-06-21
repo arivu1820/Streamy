@@ -55,7 +55,6 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   async handleDisconnect(socket: Socket) {
     const user = socket.data.user;
     if (!user) return;
-    // Leave any sessions this socket was in.
     for (const sessionId of socket.data.sessionIds as Set<string>) {
       await this.leaveSession(socket, sessionId);
     }
@@ -85,13 +84,20 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   @SubscribeMessage('chat.message.send')
   async onChatSend(
     @ConnectedSocket() socket: Socket,
-    @MessageBody() body: { roomId: string; body: string; clientNonce?: string },
+    @MessageBody() body: { roomId: string; body: string; clientNonce?: string; sessionId?: string },
   ) {
     const user = socket.data.user;
     const text = (body.body || '').trim();
     if (!text || text.length > 4000) {
       socket.emit('error', { code: 'VALIDATION_FAILED' });
       return;
+    }
+    if (body.sessionId) {
+      const live = this.state.get(body.sessionId);
+      if (live && !this.state.canChat(live, user.id)) {
+        socket.emit('error', { code: 'PERMISSION_DENIED' });
+        return;
+      }
     }
     const member = await this.prisma.roomMember.findUnique({
       where: { roomId_userId: { roomId: body.roomId, userId: user.id } },
@@ -213,13 +219,11 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     this.presence.setActivity(user.id, body.sessionId, 'Watching');
     this.broadcastPresence(user.id);
 
-    // Send the late-joiner the authoritative snapshot (FR-6.4).
     socket.emit('session.state', this.state.snapshot(body.sessionId));
     this.realtime.toSession(body.sessionId, 'participant.joined', {
       sessionId: body.sessionId,
       user: { userId: user.id, username: user.username },
     });
-    // If a change vote is open, let the late joiner see it.
     if (live.changeVote) {
       socket.emit('playback.change.opened', {
         voteId: live.changeVote.voteId,
@@ -246,7 +250,6 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       p.sockets.delete(socket.id);
       if (p.sockets.size === 0) {
         live.participants.delete(user.id);
-        // If they were in voice, tear that down too.
         if (live.voice.has(user.id)) {
           live.voice.delete(user.id);
           this.realtime.toSession(sessionId, 'voice.peer.left', { userId: user.id });
@@ -259,7 +262,6 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         this.broadcastPresence(user.id);
         this.realtime.toSession(sessionId, 'participant.left', { sessionId, userId: user.id });
 
-        // Host succession (edge case 14a).
         if (live.hostUserId === user.id && live.participants.size > 0) {
           const newHost = [...live.participants.keys()][0];
           live.hostUserId = newHost;
@@ -274,7 +276,6 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         }
       }
     }
-    // Empty session => end it.
     if (live.participants.size === 0) {
       await this.endSession(sessionId, live);
     }
@@ -294,7 +295,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     this.state.remove(sessionId);
   }
 
-  // ---------- playback governance (streamy.md Section 14) ----------
+  // ---------- playback governance ----------
   private requireSession(socket: Socket, sessionId: string) {
     const live = this.state.get(sessionId);
     if (!live) {
@@ -304,11 +305,15 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     return live;
   }
 
-  // Tier 1: anyone can pause, instantly, no vote.
+  // Tier 1: anyone can pause (unless host has disabled their playback permission).
   @SubscribeMessage('playback.pause')
   onPause(@ConnectedSocket() socket: Socket, @MessageBody() body: { sessionId: string }) {
     const live = this.requireSession(socket, body.sessionId);
     if (!live) return;
+    if (!this.state.canPlayback(live, socket.data.user.id)) {
+      socket.emit('error', { code: 'PERMISSION_DENIED' });
+      return;
+    }
     this.state.setPlaying(live, false);
     this.realtime.toSession(body.sessionId, 'playback.paused', {
       by: socket.data.user.username,
@@ -317,13 +322,13 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     });
   }
 
-  // Tier 2: only host can resume/play.
+  // Tier 2: anyone can resume/play (host can restrict per-user via permissions).
   @SubscribeMessage('playback.play')
   onPlay(@ConnectedSocket() socket: Socket, @MessageBody() body: { sessionId: string }) {
     const live = this.requireSession(socket, body.sessionId);
     if (!live) return;
-    if (live.hostUserId !== socket.data.user.id) {
-      socket.emit('error', { code: 'NOT_HOST' });
+    if (!this.state.canPlayback(live, socket.data.user.id)) {
+      socket.emit('error', { code: 'PERMISSION_DENIED' });
       return;
     }
     this.state.setPlaying(live, true);
@@ -358,6 +363,10 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   ) {
     const live = this.requireSession(socket, body.sessionId);
     if (!live) return;
+    if (!this.state.canRequest(live, socket.data.user.id)) {
+      socket.emit('error', { code: 'PERMISSION_DENIED' });
+      return;
+    }
     const req = {
       id: randomUUID(),
       type: body.type,
@@ -501,6 +510,25 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     }
   }
 
+  // ---------- member permissions (host only) ----------
+  @SubscribeMessage('host.member.permissions.set')
+  onSetMemberPermissions(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() body: { sessionId: string; targetUserId: string; permissions: Partial<import('./session-state.service').MemberPermissions> },
+  ) {
+    const live = this.requireSession(socket, body.sessionId);
+    if (!live) return;
+    if (live.hostUserId !== socket.data.user.id) {
+      socket.emit('error', { code: 'NOT_HOST' });
+      return;
+    }
+    const updated = this.state.setPermissions(live, body.targetUserId, body.permissions);
+    this.realtime.toSession(body.sessionId, 'member.permissions.updated', {
+      userId: body.targetUserId,
+      permissions: updated,
+    });
+  }
+
   // ---------- host transfer ----------
   @SubscribeMessage('host.transfer.offer')
   onHostOffer(
@@ -534,9 +562,7 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     });
   }
 
-  // ---------- voice chat (mesh WebRTC signaling, streamy.md Section 46) ----------
-  // The gateway is ONLY a signaling relay; audio flows peer-to-peer. Voice state
-  // is ephemeral (no DB). A newcomer initiates offers to everyone already in voice.
+  // ---------- voice chat (mesh WebRTC signaling) ----------
   @SubscribeMessage('voice.join')
   onVoiceJoin(@ConnectedSocket() socket: Socket, @MessageBody() body: { sessionId: string }) {
     const live = this.requireSession(socket, body.sessionId);
@@ -546,7 +572,10 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
       socket.emit('error', { code: 'NOT_IN_SESSION' });
       return;
     }
-    // Existing voice peers (excluding self) — the joiner will call each of them.
+    if (!this.state.canVoice(live, user.id)) {
+      socket.emit('error', { code: 'PERMISSION_DENIED' });
+      return;
+    }
     const peers = this.state.voiceRoster(live).filter((p) => p.userId !== user.id);
     live.voice.set(user.id, { username: user.username, muted: false });
     socket.emit('voice.roster', { peers });
@@ -566,7 +595,6 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     }
   }
 
-  // Relay an SDP offer/answer or ICE candidate to one specific peer's socket(s).
   @SubscribeMessage('voice.signal')
   onVoiceSignal(
     @ConnectedSocket() socket: Socket,

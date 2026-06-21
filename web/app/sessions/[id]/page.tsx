@@ -1,4 +1,5 @@
 'use client';
+import { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { streamUrl } from '../../../lib/api';
 import { useRequireAuth } from '../../../lib/auth';
@@ -8,11 +9,40 @@ import { Icon } from '../../../components/icons';
 import { ChatPanel } from '../../../components/ChatPanel';
 import { VoiceBar } from '../../../components/VoiceBar';
 
+function PermToggle({
+  label,
+  icon,
+  enabled,
+  onChange,
+}: {
+  label: string;
+  icon: keyof typeof Icon;
+  enabled: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  const Ic = Icon[icon] as any;
+  return (
+    <button
+      onClick={() => onChange(!enabled)}
+      className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg border transition ${
+        enabled
+          ? 'bg-good/10 border-good/30 text-good'
+          : 'bg-bad/10 border-bad/30 text-bad line-through opacity-60'
+      }`}
+      title={enabled ? `Disable ${label}` : `Enable ${label}`}
+    >
+      {Ic && <Ic size={12} />}
+      {label}
+    </button>
+  );
+}
+
 export default function TheaterPage() {
   const user = useRequireAuth();
   const router = useRouter();
   const { id: sessionId } = useParams<{ id: string }>();
   const t = useTheaterSession(sessionId, user);
+  const [sideTab, setSideTab] = useState<'chat' | 'members'>('chat');
 
   if (!user) return null;
   if (t.ended)
@@ -27,12 +57,17 @@ export default function TheaterPage() {
         </button>
       </div>
     );
-  if (!t.detail) return <Spinner label="Joining the session and syncing to the group…" />;
+  if (!t.detail) return <Spinner label="Joining the session and syncing to the group..." />;
 
-  const { nowPlaying, isHost, isPlaying, clock, duration } = t;
+  const { nowPlaying, isHost, isPlaying, clock, duration, myPermissions } = t;
+
+  const setPermission = (targetUserId: string, patch: Record<string, boolean>) => {
+    t.emit('host.member.permissions.set', { targetUserId, permissions: patch });
+  };
 
   return (
     <div className="grid lg:grid-cols-[1fr_360px] gap-5">
+      {/* LEFT COLUMN */}
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <button className="btn-subtle btn-sm" onClick={() => router.push(`/rooms/${t.detail.roomId}`)}>
@@ -69,7 +104,7 @@ export default function TheaterPage() {
 
         {/* scrubber */}
         <div className="flex items-center gap-3 text-xs text-gray-400">
-          <span className={isPlaying ? 'text-good' : 'text-gray-400'} title={isPlaying ? 'Playing' : 'Paused'}>
+          <span className={isPlaying ? 'text-good' : 'text-gray-400'}>
             {isPlaying ? <Icon.Play size={14} /> : <Icon.Pause size={14} />}
           </span>
           <span className="tabular-nums">{fmtTime(clock * 1000)}</span>
@@ -86,44 +121,85 @@ export default function TheaterPage() {
           <span className="tabular-nums">{fmtTime((duration || 0) * 1000)}</span>
         </div>
 
-        {/* governance controls */}
+        {/* playback controls */}
         <div className="card p-4 space-y-3">
           <div className="flex items-center justify-between">
             <SectionTitle icon="Vote">Playback controls</SectionTitle>
-            {isHost ? <Badge tone="brand" icon="Host">You're the host</Badge> : <Badge tone="neutral" icon="Eye">Watching</Badge>}
+            {isHost ? (
+              <Badge tone="brand" icon="Host">You're the host</Badge>
+            ) : (
+              <Badge tone="neutral" icon="Eye">Watching</Badge>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <button className="btn-ghost" onClick={() => t.emit('playback.pause', {})} title="Anyone can pause for the whole group, instantly">
-              <Icon.Pause size={16} /> Pause
-            </button>
-            {isHost ? (
+            {(isHost || myPermissions.playback) && (
+              <button
+                className="btn-ghost"
+                onClick={() => t.emit('playback.pause', {})}
+                title="Pause playback for the whole group"
+              >
+                <Icon.Pause size={16} /> Pause
+              </button>
+            )}
+            {(isHost || myPermissions.playback) && (
+              <button
+                className="btn-primary"
+                onClick={() => t.emit('playback.play', {})}
+                title="Resume playback for everyone"
+              >
+                <Icon.Play size={16} /> Play / Resume
+              </button>
+            )}
+            {isHost && (
               <>
-                <button className="btn-primary" onClick={() => t.emit('playback.play', {})} title="Resume playback for everyone">
-                  <Icon.Play size={16} /> Play / Resume
-                </button>
-                <button className="btn-ghost" onClick={() => t.emit('playback.seek', { positionMs: Math.max(0, (clock - 10) * 1000) })} title="Rewind 10s for everyone">
+                <button
+                  className="btn-ghost"
+                  onClick={() => t.emit('playback.seek', { positionMs: Math.max(0, (clock - 10) * 1000) })}
+                  title="Rewind 10s for everyone"
+                >
                   <Icon.Rewind size={16} /> 10s
                 </button>
-                <button className="btn-ghost" onClick={() => t.emit('playback.seek', { positionMs: (clock + 10) * 1000 })} title="Forward 10s for everyone">
+                <button
+                  className="btn-ghost"
+                  onClick={() => t.emit('playback.seek', { positionMs: (clock + 10) * 1000 })}
+                  title="Forward 10s for everyone"
+                >
                   <Icon.Forward size={16} /> 10s
                 </button>
               </>
-            ) : (
+            )}
+            {!isHost && myPermissions.request && (
               <>
-                <button className="btn-ghost" onClick={() => t.emit('playback.request', { type: 'rewind', positionMs: Math.max(0, (clock - 30) * 1000) })} title="Ask the host to rewind 30s">
+                <button
+                  className="btn-ghost"
+                  onClick={() => t.emit('playback.request', { type: 'rewind', positionMs: Math.max(0, (clock - 30) * 1000) })}
+                  title="Ask the host to rewind 30s"
+                >
                   <Icon.Hand size={16} /> Request <Icon.Rewind size={14} /> 30s
                 </button>
-                <button className="btn-ghost" onClick={() => t.emit('playback.request', { type: 'forward', positionMs: (clock + 30) * 1000 })} title="Ask the host to skip 30s">
+                <button
+                  className="btn-ghost"
+                  onClick={() => t.emit('playback.request', { type: 'forward', positionMs: (clock + 30) * 1000 })}
+                  title="Ask the host to skip 30s"
+                >
                   <Icon.Hand size={16} /> Request <Icon.Forward size={14} /> 30s
                 </button>
               </>
             )}
+            {!isHost && !myPermissions.playback && (
+              <span className="text-xs text-gray-500 flex items-center gap-1">
+                <Icon.Info size={13} /> Playback controls disabled by host
+              </span>
+            )}
           </div>
+
           <Caption icon="Info">
             {isHost
-              ? 'Anyone can pause. As host, you control resume and seeking — others send requests you approve.'
-              : 'Anyone can pause for the group. Only the host can resume or seek — use Request and the host approves.'}
+              ? 'Anyone can pause and play. As host, you control seeking — others send requests you approve.'
+              : myPermissions.playback
+              ? 'You can pause and play for the group. Only the host can seek — use Request and the host approves.'
+              : 'The host has disabled playback controls for you.'}
           </Caption>
 
           <div className="flex items-center gap-2 text-sm pt-3 border-t border-edge">
@@ -138,7 +214,7 @@ export default function TheaterPage() {
                 e.target.value = '';
               }}
             >
-              <option value="">Propose a different video…</option>
+              <option value="">Propose a different video...</option>
               {t.roomVideos
                 .filter((v) => v.id !== nowPlaying?.id && v.status === 'ready')
                 .map((v) => (
@@ -171,7 +247,7 @@ export default function TheaterPage() {
           )}
         </div>
 
-        {/* participants */}
+        {/* participants strip */}
         <div className="card p-4">
           <SectionTitle icon="Eye">Watching now ({t.participants.length})</SectionTitle>
           <div className="flex flex-wrap gap-2 mt-3">
@@ -198,10 +274,88 @@ export default function TheaterPage() {
           </div>
         </div>
 
-        <VoiceBar sessionId={sessionId} selfUsername={user.username} />
+        <VoiceBar sessionId={sessionId} selfUsername={user.username} voiceEnabled={isHost || myPermissions.voice} />
       </div>
 
-      <ChatPanel roomId={t.detail.roomId} compact />
+      {/* RIGHT COLUMN */}
+      <div className="flex flex-col">
+        {/* Tab bar */}
+        <div className="flex border-b border-edge">
+          <button
+            className={`flex-1 py-2.5 text-sm font-medium flex items-center justify-center gap-1.5 transition border-b-2 ${
+              sideTab === 'chat' ? 'border-brand2 text-brand2' : 'border-transparent text-gray-500 hover:text-gray-300'
+            }`}
+            onClick={() => setSideTab('chat')}
+          >
+            <Icon.Chat size={14} /> Chat
+          </button>
+          {isHost && (
+            <button
+              className={`flex-1 py-2.5 text-sm font-medium flex items-center justify-center gap-1.5 transition border-b-2 ${
+                sideTab === 'members' ? 'border-brand2 text-brand2' : 'border-transparent text-gray-500 hover:text-gray-300'
+              }`}
+              onClick={() => setSideTab('members')}
+            >
+              <Icon.Eye size={14} /> Members
+              {t.participants.length > 0 && (
+                <span className="ml-1 bg-panel2 border border-edge text-[10px] px-1.5 py-0.5 rounded-full">
+                  {t.participants.length}
+                </span>
+              )}
+            </button>
+          )}
+        </div>
+
+        {sideTab === 'chat' && <ChatPanel roomId={t.detail.roomId} compact chatEnabled={isHost || myPermissions.chat} />}
+
+        {sideTab === 'members' && isHost && (
+          <div className="card flex flex-col" style={{ minHeight: '60vh' }}>
+            <div className="px-4 py-3 border-b border-edge">
+              <span className="section-title">
+                <span className="text-brand2"><Icon.Eye size={16} /></span>
+                Manage members
+              </span>
+            </div>
+            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+              {t.participants.length === 0 && (
+                <div className="text-gray-500 text-sm text-center py-8">No participants yet.</div>
+              )}
+              {t.participants.map((p) => {
+                const isMe = p.userId === user.id;
+                const isParticipantHost = p.userId === t.hostId;
+                const perms = t.memberPermissions[p.userId] ?? { chat: true, voice: true, playback: true, request: true };
+                return (
+                  <div key={p.userId} className="bg-panel2/60 border border-edge rounded-xl p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Avatar name={p.username} size={28} />
+                      <span className="text-sm font-medium flex-1 truncate">@{p.username}</span>
+                      {isParticipantHost && (
+                        <span className="text-[10px] text-brand2 border border-brand/30 bg-brand/10 px-1.5 py-0.5 rounded">Host</span>
+                      )}
+                      {isMe && <span className="text-[10px] text-gray-500">(you)</span>}
+                    </div>
+                    {!isMe && !isParticipantHost ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        <PermToggle label="Chat" icon="Chat" enabled={perms.chat} onChange={(v) => setPermission(p.userId, { chat: v })} />
+                        <PermToggle label="Voice" icon="Mic" enabled={perms.voice} onChange={(v) => setPermission(p.userId, { voice: v })} />
+                        <PermToggle label="Play/Pause" icon="Play" enabled={perms.playback} onChange={(v) => setPermission(p.userId, { playback: v })} />
+                        <PermToggle label="Requests" icon="Hand" enabled={perms.request} onChange={(v) => setPermission(p.userId, { request: v })} />
+                      </div>
+                    ) : (
+                      <div className="text-xs text-gray-600 italic">
+                        {isMe ? 'Cannot restrict yourself.' : 'Host always has full access.'}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="px-4 py-3 border-t border-edge">
+              <Caption icon="Info">Click a badge to toggle that permission. Changes take effect immediately.</Caption>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* change-video vote modal */}
       {t.changeVote && (
@@ -213,16 +367,12 @@ export default function TheaterPage() {
               </span>
               Change movie?
             </div>
-            <div className="text-sm">
-              Vote to switch to <b>“{t.changeVote.videoTitle}”</b>.
-            </div>
+            <div className="text-sm">Vote to switch to <b>"{t.changeVote.videoTitle}"</b>.</div>
             <Caption icon="Info">Changing the movie affects everyone, so it needs a group vote. A tie keeps the current video.</Caption>
             <div className="text-sm flex items-center gap-2">
-              <Badge tone="good" icon="Check">
-                {t.changeVote.approvals ?? 0} approve
-              </Badge>
+              <Badge tone="good" icon="Check">{t.changeVote.approvals ?? 0} approve</Badge>
               <span className="text-gray-500">
-                of {t.changeVote.participants ?? '—'}
+                of {t.changeVote.participants ?? '---'}
                 {t.changeVote.needed && t.changeVote.needed < 90 ? ` · needs ${t.changeVote.needed}` : ''}
               </span>
             </div>
@@ -238,7 +388,7 @@ export default function TheaterPage() {
         </div>
       )}
 
-      {/* host transfer offer */}
+      {/* host transfer offer modal */}
       {t.hostOffer && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-30 p-4">
           <div className="card p-6 max-w-sm w-full space-y-4">
@@ -249,7 +399,7 @@ export default function TheaterPage() {
               Become the host?
             </div>
             <div className="text-sm text-gray-300">@{t.hostOffer.from} wants to transfer playback control to you.</div>
-            <Caption icon="Host">As host you'll control resume and seeking. You can transfer it back anytime.</Caption>
+            <Caption icon="Host">As host you control seeking and member permissions. You can transfer it back anytime.</Caption>
             <div className="flex gap-2">
               <button
                 className="btn-primary flex-1"
@@ -262,7 +412,7 @@ export default function TheaterPage() {
               </button>
               <button className="btn-subtle flex-1" onClick={() => t.setHostOffer(null)}>
                 <Icon.Close size={16} /> Decline
-              </button>
+                            </button>
             </div>
           </div>
         </div>

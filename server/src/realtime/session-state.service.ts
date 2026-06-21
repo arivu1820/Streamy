@@ -20,6 +20,19 @@ export interface ChangeVote {
   deadline: number;
   votes: Map<string, 'approve' | 'reject'>;
 }
+/** Per-user permission flags. All default to true (fully enabled). */
+export interface MemberPermissions {
+  chat: boolean;     // can send chat messages
+  voice: boolean;    // can join voice
+  playback: boolean; // can pause / play
+  request: boolean;  // can send seek requests to the host
+}
+const DEFAULT_PERMISSIONS: MemberPermissions = {
+  chat: true,
+  voice: true,
+  playback: true,
+  request: true,
+};
 interface LiveSession {
   hostUserId: string;
   nowPlayingVideoId: string | null;
@@ -30,6 +43,7 @@ interface LiveSession {
   requests: Map<string, PlaybackRequest>;
   changeVote?: ChangeVote;
   voice: Map<string, { username: string; muted: boolean }>; // userIds currently in voice
+  memberPermissions: Map<string, MemberPermissions>;
 }
 
 @Injectable()
@@ -47,6 +61,7 @@ export class SessionStateService {
       participants: new Map(),
       requests: new Map(),
       voice: new Map(),
+      memberPermissions: new Map(),
     };
     this.sessions.set(sessionId, live);
     return live;
@@ -97,10 +112,46 @@ export class SessionStateService {
         userId,
         username: p.username,
       })),
+      memberPermissions: this.allPermissions(s),
     };
   }
 
   remove(sessionId: string) {
     this.sessions.delete(sessionId);
+  }
+
+  // ---------- permissions ----------
+  private getPermissions(live: LiveSession, userId: string): MemberPermissions {
+    // Host always has full permissions.
+    if (live.hostUserId === userId) return { ...DEFAULT_PERMISSIONS };
+    return live.memberPermissions.get(userId) ?? { ...DEFAULT_PERMISSIONS };
+  }
+
+  setPermissions(live: LiveSession, userId: string, patch: Partial<MemberPermissions>): MemberPermissions {
+    const current = this.getPermissions(live, userId);
+    const updated = { ...current, ...patch };
+    live.memberPermissions.set(userId, updated);
+    return updated;
+  }
+
+  allPermissions(live: LiveSession): Record<string, MemberPermissions> {
+    const result: Record<string, MemberPermissions> = {};
+    for (const userId of live.participants.keys()) {
+      result[userId] = this.getPermissions(live, userId);
+    }
+    return result;
+  }
+
+  canChat(live: LiveSession, userId: string): boolean {
+    return this.getPermissions(live, userId).chat;
+  }
+  canVoice(live: LiveSession, userId: string): boolean {
+    return this.getPermissions(live, userId).voice;
+  }
+  canPlayback(live: LiveSession, userId: string): boolean {
+    return this.getPermissions(live, userId).playback;
+  }
+  canRequest(live: LiveSession, userId: string): boolean {
+    return this.getPermissions(live, userId).request;
   }
 }

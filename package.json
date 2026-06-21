@@ -13,7 +13,8 @@
     "dev:api": "npm run dev -w streamy-server",
     "dev:web": "npm run dev -w streamy-web",
     "test": "npm test -w streamy-server",
-    "build": "npm run build -w streamy-server && npm run build -w streamy-web"
+    "build": "npm run build -w streamy-server && npm run build -w streamy-web",
+    "start": "npm run start -w streamy-server"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

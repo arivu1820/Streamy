@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef } from 'react';
 import { useVoice } from '../lib/useVoice';
-import { Avatar, SectionTitle, Caption, Badge } from './ui';
+import { Avatar, SectionTitle, Caption } from './ui';
 import { Icon } from './icons';
 
 function RemoteAudio({ stream }: { stream: MediaStream }) {
@@ -12,8 +12,13 @@ function RemoteAudio({ stream }: { stream: MediaStream }) {
   return <audio ref={ref} autoPlay playsInline />;
 }
 
-export function VoiceBar({ sessionId, selfUsername }: { sessionId: string; selfUsername: string }) {
+export function VoiceBar({ sessionId, selfUsername, voiceEnabled = true }: { sessionId: string; selfUsername: string; voiceEnabled?: boolean }) {
   const { inVoice, muted, peers, remoteStreams, error, join, leave, toggleMute } = useVoice(sessionId);
+
+  // Auto-leave if host disables voice while we are already in it.
+  useEffect(() => {
+    if (!voiceEnabled && inVoice) leave();
+  }, [voiceEnabled, inVoice, leave]);
 
   return (
     <div className="card p-4">
@@ -30,10 +35,14 @@ export function VoiceBar({ sessionId, selfUsername }: { sessionId: string; selfU
                 <Icon.Leave size={15} /> Leave
               </button>
             </>
-          ) : (
+          ) : voiceEnabled ? (
             <button className="btn-primary btn-sm" onClick={join} title="Join voice chat (we'll ask for mic access)">
               <Icon.Mic size={15} /> Join voice
             </button>
+          ) : (
+            <span className="text-xs text-gray-500 flex items-center gap-1.5">
+              <Icon.MicOff size={13} /> Disabled by host
+            </span>
           )}
         </div>
       </div>
@@ -62,7 +71,7 @@ export function VoiceBar({ sessionId, selfUsername }: { sessionId: string; selfU
           ))}
           {peers.length === 0 && (
             <span className="text-xs text-gray-500 flex items-center gap-1">
-              <Icon.Clock size={12} /> Waiting for others to join voice…
+              <Icon.Clock size={12} /> Waiting for others to join voice...
             </span>
           )}
         </div>

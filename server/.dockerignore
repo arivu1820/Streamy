@@ -1,0 +1,19 @@
+# Backend ignore (used if the build context is ./server instead of repo root).
+# The authoritative ignore for the default setup is the repo-root .dockerignore,
+# because server/Dockerfile builds from the monorepo root.
+node_modules
+dist
+storage
+uploads
+*.tsbuildinfo
+*.db
+*.sqlite
+*.sqlite3
+.env
+.env.*
+!.env.example
+Dockerfile
+.dockerignore
+coverage
+*.log
+.DS_Store

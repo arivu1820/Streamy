@@ -1,0 +1,14 @@
+# Frontend ignore (used if the build context is ./web instead of repo root).
+# The authoritative ignore for the default setup is the repo-root .dockerignore,
+# because web/Dockerfile builds from the monorepo root.
+node_modules
+.next
+out
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+Dockerfile
+.dockerignore
+.DS_Store
+*.log

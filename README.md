@@ -2,7 +2,7 @@
 
 > A private, real-time co-watching platform for friend groups — create rooms, upload videos, and watch them in perfectly synchronized sessions with live chat and voice. There are **no room owners**: group-affecting actions (changing the video, deleting media) are decided democratically.
 
-This README is the complete developer setup guide. If you have just cloned the repo, start at **[Prerequisites](#3-prerequisites)** and follow the sections in order — a junior developer should be able to get the whole stack running by copy-pasting the commands below.
+This README is the complete developer setup guide. If you have just cloned the repo, start at **[Prerequisites](#3-prerequisites)** and follow the sections in order — a junior developer should be able to get the whole stack running by copy-pasting the commands below. 
 
 ---
 

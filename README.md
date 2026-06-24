@@ -556,4 +556,4 @@ or, with no Redis:
 
 ## Deploying to the cloud (free tiers)
 
-Full step-by-step instructions for **Vercel + Render + Neon + Upstash + Cloudflare R2** are in **[`DEPLOYMENT.md`](./DEPLOYMENT.md)**, including environment-variable tables, WebSocket/CORS setup, Prisma migration workflow, a production checklist, and troubleshooting.
+Full step-by-step instructions for **Vercel + Render + Neon + Upstash + Cloudflare R2** are in **[`DEPLOYMENT.md`](./DEPLOYMENT.md)**, including environment-variable tables, WebSocket/CORS setup, Prisma migration workflow, a production checklist, and troubleshooting. 
